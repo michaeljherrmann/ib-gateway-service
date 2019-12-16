@@ -7,8 +7,8 @@ END_COLOR='\033[0m';
 
 LOCAL_IMAGE="ib-gateway-service"
 REMOTE_IMAGE="mjherrma/ib-gateway-service"
-TAG="latest"
-PUSH_TO_REPO="no"
+TAG="1.0"
+PUSH_TO_REPO="yes"
 
 set -e
 
