@@ -1,11 +1,12 @@
 const bodyParser = require('body-parser');
 const express    = require('express');
 const kill       = require('tree-kill');
+const proxy      = require('http-proxy-middleware');
 const puppeteer  = require('puppeteer');
 const { spawn }  = require('child_process');
 
 // consts from environment
-const IBG_SERVICE_PORT = process.env.IBG_SERVICE_PORT || 5050;
+const IB_GATEWAY_SERVICE_PORT = process.env.IB_GATEWAY_SERVICE_PORT || 5050;
 
 const IB_GATEWAY_BIN = process.env.IB_GATEWAY_BIN;
 const IB_GATEWAY_CONF = process.env.IB_GATEWAY_CONF;
@@ -64,13 +65,24 @@ app.use((req, res, next) => {
 
 
 // REGISTER OUR ROUTES -------------------------------
-app.use('/ibg', router);
+app.use('/api', router);
+
+// REGISTER PROXY ------------------------------------
+const proxyOptions = {
+    target: IB_GATEWAY,
+    ws: true, // proxy websockets
+    secure: false, // don't verify ssl certs
+    pathRewrite: {
+        '^/api/gateway': '', // remove base api path
+  },
+};
+app.use('/api/gateway', proxy(proxyOptions));
 
 
 // START THE SERVICE
 // =============================================================================
-app.listen(IBG_SERVICE_PORT);
-console.log('Magic happens on PORT:' + IBG_SERVICE_PORT);
+app.listen(IB_GATEWAY_SERVICE_PORT);
+console.log('Magic happens on PORT:' + IB_GATEWAY_SERVICE_PORT);
 
 // PUPPETEER-CHROME INTERACTION
 // =============================================================================
@@ -130,6 +142,7 @@ async function startIBGateway() {
         throw new Error('Missing bin and/or conf for ib gateway');
     }
 
+    console.log('Starting IB Gateway');
     gateway = spawn(IB_GATEWAY_BIN, [IB_GATEWAY_CONF]);
     gateway.stdout.on('data', log);
     gateway.stderr.on('data', warn);
@@ -156,6 +169,7 @@ async function stopIBGateway() {
             }
             else {
                 gateway = null;
+                console.log('IB Gateway stopped');
                 resolve();
             }
         });
