@@ -12,7 +12,8 @@ const IB_GATEWAY_BIN = process.env.IB_GATEWAY_BIN;
 const IB_GATEWAY_CONF = process.env.IB_GATEWAY_CONF;
 const IB_GATEWAY_DOMAIN = process.env.IB_GATEWAY_DOMAIN || 'localhost';
 const IB_GATEWAY_PORT = process.env.IB_GATEWAY_PORT || 5000;
-const IB_GATEWAY = 'https://' + IB_GATEWAY_DOMAIN + ':' + IB_GATEWAY_PORT;
+const IB_GATEWAY_SCHEME = process.env.IB_GATEWAY_SCHEME || 'https://';
+const IB_GATEWAY = IB_GATEWAY_SCHEME + IB_GATEWAY_DOMAIN + ':' + IB_GATEWAY_PORT;
 
 // configure app to use bodyParser
 const app = express();
