@@ -5,7 +5,13 @@ const proxy      = require('http-proxy-middleware');
 const puppeteer  = require('puppeteer');
 const { spawn }  = require('child_process');
 
+// TODO: for now the proxy forwarding doesn't seem to work that well
+//  the ib gateway rejects/doesn't respond to some of those requests
+//  have to debug further, but maybe it has to do with header info?
+//  for now just communicating directly to the ib gateway
+
 // consts from environment
+const LOG_LEVEL = process.env.IB_GATEWAY_LOG_LEVEL || 'info';
 const IB_GATEWAY_SERVICE_PORT = process.env.IB_GATEWAY_SERVICE_PORT || 5050;
 
 const IB_GATEWAY_BIN = process.env.IB_GATEWAY_BIN;
@@ -75,7 +81,8 @@ const proxyOptions = {
     secure: false, // don't verify ssl certs
     pathRewrite: {
         '^/api/gateway': '', // remove base api path
-  },
+    },
+    logLevel: LOG_LEVEL,
 };
 app.use('/api/gateway', proxy(proxyOptions));
 

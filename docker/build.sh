@@ -7,7 +7,7 @@ END_COLOR='\033[0m';
 
 LOCAL_IMAGE="ib-gateway-service"
 REMOTE_IMAGE="mjherrma/ib-gateway-service"
-TAG="2.0.1"
+TAG="2.0.2"
 PUSH_TO_REPO="yes"
 
 set -e
