@@ -47,8 +47,12 @@ router.route('/service')
     // body: { username: <USERNAME>, password: <PASSWORD> }
     .put((req, res) => {
         doAuth(req.body.username, req.body.password).then(() => {
+            authLockResolve();
+            authLock = null;
             res.status(200).json('OK');
         }).catch((err) => {
+            authLockReject();
+            authLock = null;
             res.status(400).json('Error authenticating: ' + err);
         });
     })
@@ -94,10 +98,25 @@ console.log('Magic happens on PORT:' + IB_GATEWAY_SERVICE_PORT);
 
 // PUPPETEER-CHROME INTERACTION
 // =============================================================================
+let authLock;
+let authLockResolve;
+let authLockReject;
 async function doAuth(username, password) {
     if (!gateway) {
         throw new Error('IB gateway needs to be first started before trying to login');
     }
+
+    if (authLock) {
+        // another request already started authentication, just wait for that
+        console.log('Already an ongoing auth request, waiting on that');
+        await authLock;
+        return;
+    }
+    // grab the lock
+    authLock = new Promise((resolve, reject) => {
+        authLockResolve = resolve;
+        authLockReject = reject;
+    });
 
     const browser = await puppeteer.launch({
         executablePath: 'google-chrome-unstable',
