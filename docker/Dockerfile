@@ -31,6 +31,8 @@ RUN unzip clientportal.gw.zip
 
 # edit conf.yaml (need to allow ip 172.* for docker)
 RUN sed -i 's/allow:/allow:\n        - 172.*/' root/conf.yaml
+# edit conf.yaml (need to allow ip 10.244.0.* for digital ocean)
+RUN sed -i 's/allow:/allow:\n        - 10.244.*/' root/conf.yaml
 
 # Install package requirements
 COPY ./package-lock.json ./package-lock.json
