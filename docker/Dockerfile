@@ -2,13 +2,14 @@ FROM openjdk:14-slim
 
 RUN apt-get update && apt-get install -y \
     curl \
+    dumb-init \
     procps \
     unzip \
     wget
 
 
 # Install nodejs
-RUN curl -sL https://deb.nodesource.com/setup_13.x | bash -
+RUN curl -sL https://deb.nodesource.com/setup_12.x | bash -
 RUN apt-get install -y nodejs
 
 # Install Chrome
@@ -42,5 +43,8 @@ RUN npm ci
 # Copy server code
 COPY ./server.js ./server.js
 
+# Use dumb-init to prevent zombie processes from puppeteer
+ENTRYPOINT ["/usr/bin/dumb-init", "--"]
+
 # Run service
-ENTRYPOINT ["npm", "start"]
+CMD ["node", "server.js"]

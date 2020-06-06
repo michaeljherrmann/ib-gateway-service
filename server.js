@@ -36,8 +36,12 @@ router.route('/service')
     // starts the IB gateway
     .post((req, res) => {
         startIBGateway().then(() => {
+            startLockResolve();
+            startLock = null;
             res.status(200).json('OK');
         }).catch((err) => {
+            startLockReject();
+            startLock = null;
             res.status(400).json('Error launching gateway: ' + err)
         });
     })
@@ -159,6 +163,9 @@ function warn(msg) {
     console.warn('stdout: ' + msg);
 }
 
+let startLock;
+let startLockResolve;
+let startLockReject;
 async function startIBGateway() {
     if (gateway) {
         // gateway is already running
@@ -169,13 +176,28 @@ async function startIBGateway() {
         throw new Error('Missing bin and/or conf for ib gateway');
     }
 
+    if (startLock) {
+        // another request already started the gateway, just wait for that
+        console.log('Already an ongoing start request, waiting on that');
+        return startLock;
+    }
+    // grab the lock
+    startLock = new Promise((resolve, reject) => {
+        startLockResolve = resolve;
+        startLockReject = reject;
+    });
+
     console.log('Starting IB Gateway');
     gateway = spawn(IB_GATEWAY_BIN, [IB_GATEWAY_CONF]);
     gateway.stdout.on('data', log);
     gateway.stderr.on('data', warn);
+    gateway.on('exit', function (code) {
+      console.log('IB Gateway exited with code ' + code);
+      gateway = null;
+    });
 
-    // wait for 5s to allow process to start
-    return new Promise(resolve => setTimeout(resolve, 5000));
+    // wait for 10s to allow process to start
+    return new Promise(resolve => setTimeout(resolve, 10000));
 }
 
 
