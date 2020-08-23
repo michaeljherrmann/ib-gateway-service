@@ -105,6 +105,7 @@ console.log('Magic happens on PORT:' + IB_GATEWAY_SERVICE_PORT);
 let authLock;
 let authLockResolve;
 let authLockReject;
+let browser;
 async function doAuth(username, password) {
     if (!gateway) {
         throw new Error('IB gateway needs to be first started before trying to login');
@@ -122,29 +123,34 @@ async function doAuth(username, password) {
         authLockReject = reject;
     });
 
-    const browser = await puppeteer.launch({
+    browser = await puppeteer.launch({
         executablePath: 'google-chrome-unstable',
         headless: true,
         args: ['--no-sandbox'],
         ignoreHTTPSErrors: true, // ssl cert not valid for ib gateway
     });
 
-    // Open login page
-    const page = await browser.newPage();
-    await page.goto(IB_GATEWAY);
+    let successMessage = '';
+    try {
+        // Open login page
+        const page = await browser.newPage();
+        await page.goto(IB_GATEWAY);
 
-    // Submit credentials
-    await page.type('#user_name', username);
-    await page.type('#password', password);
-    await page.click('#submitForm');
+        // Submit credentials
+        await page.type('#user_name', username);
+        await page.type('#password', password);
+        await page.click('#submitForm');
 
-    // Wait for redirect
-    await page.waitForNavigation();
+        // Wait for redirect
+        await page.waitForNavigation();
 
-    // Verify
-    let successMessage = await page.evaluate(() => document.body.innerText);
-
-    browser.close();
+        // Verify
+        successMessage = await page.evaluate(() => document.body.innerText);
+    }
+    finally {
+        await browser.close();
+        browser = null;
+    }
 
     if (successMessage !== 'Client login succeeds') {
         throw Error('Login could not be verified! msg: ' + successMessage);
@@ -202,6 +208,11 @@ async function startIBGateway() {
 
 
 async function stopIBGateway() {
+    if (browser) {
+        // kill the browser too if it's still open
+        browser.close();
+        browser = null;
+    }
     if (!gateway) {
         // no gateway or it was already killed
         return;
