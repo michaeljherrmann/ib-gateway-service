@@ -55,7 +55,7 @@ router.route('/service')
             authLock = null;
             res.status(200).json('OK');
         }).catch((err) => {
-            authLockReject();
+            authLockReject && authLockReject();
             authLock = null;
             res.status(400).json('Error authenticating: ' + err);
         });
@@ -124,7 +124,7 @@ async function doAuth(username, password) {
     });
 
     browser = await puppeteer.launch({
-        executablePath: 'google-chrome-unstable',
+        // executablePath: 'google-chrome-unstable', // uncomment to use chrome
         headless: true,
         args: ['--no-sandbox'],
         ignoreHTTPSErrors: true, // ssl cert not valid for ib gateway
