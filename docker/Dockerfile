@@ -22,7 +22,7 @@ RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key
     && rm -rf /var/lib/apt/lists/*
 
 # Uncomment to disable the download of Chromium
-#ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD true
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD true
 
 WORKDIR /opt/app
 ENV IB_GATEWAY_BIN="/opt/app/bin/run.sh"

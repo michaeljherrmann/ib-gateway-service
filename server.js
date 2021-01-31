@@ -41,7 +41,7 @@ router.route('/service')
             startLock = null;
             res.status(200).json('OK');
         }).catch((err) => {
-            startLockReject();
+            startLockReject(err);
             startLock = null;
             res.status(400).json('Error launching gateway: ' + err)
         });
@@ -51,12 +51,12 @@ router.route('/service')
     // authenticates the ib gateway using the credentials passed in
     // body: { username: <USERNAME>, password: <PASSWORD> }
     .put((req, res) => {
-        doAuth(req.body.username, req.body.password).then(() => {
-            authLockResolve();
+        doAuth(req.body.username, req.body.password).then((data) => {
+            authLockResolve(data);
             authLock = null;
-            res.status(200).json('OK');
+            res.status(200).json(data);
         }).catch((err) => {
-            authLockReject && authLockReject();
+            authLockReject && authLockReject(err);
             authLock = null;
             res.status(400).json('Error authenticating: ' + err);
         });
@@ -125,7 +125,7 @@ async function doAuth(username, password) {
     authLock.catch(() => {});
 
     browser = await puppeteer.launch({
-        // executablePath: 'google-chrome-unstable', // uncomment to use chrome
+        executablePath: 'google-chrome-unstable', // uncomment to use chrome
         headless: true,
         args: ['--no-sandbox'],
         ignoreHTTPSErrors: true, // ssl cert not valid for ib gateway
@@ -156,6 +156,65 @@ async function doAuth(username, password) {
     if (successMessage !== 'Client login succeeds') {
         throw Error('Login could not be verified! msg: ' + successMessage);
     }
+
+    // Wait for gateway to be authenticated
+    const isGatewayAuthenticated = () => {
+        return new Promise((resolve, reject) => {
+            console.log('checking if gateway is authenticated')
+            const options = {
+                hostname: IB_GATEWAY_DOMAIN,
+                port: IB_GATEWAY_PORT,
+                path: '/v1/api/iserver/auth/status',
+                method: 'GET',
+                rejectUnauthorized: false, // disable SSL check
+            };
+            const req = https.request(options, (res) => {
+                console.log('statusCode:', res.statusCode);
+                console.log('headers:', res.headers);
+                let body='';
+                res.on('data', (chunk) => {
+                    body += chunk;
+                });
+                res.on('end', () => {
+                    if (res.statusCode >= 200 && res.statusCode < 400) {
+                        const data = JSON.parse(body);
+                        console.log(body);
+                        if (data.authenticated) {
+                            resolve(data);
+                        }
+                        else {
+                            reject(new Error(body));
+                        }
+                    }
+                    else {
+                        reject(new Error(res.statusCode));
+                    }
+                });
+
+            }).on('error', (e) => {
+                console.error(e);
+                reject(e);
+            });
+            req.setHeader('user-agent', 'ib-gateway-service');
+            req.setHeader('content-type', 'application/json');
+            req.setHeader('accept', 'application/json');
+            req.end();
+        });
+    }
+
+    let err;
+    for (let i = 0; i < 10; i++) {
+        console.log(`Gateway is not authenticated yet, checking again in ${i}s`)
+        await new Promise(resolve => setTimeout(resolve, i * 1000));
+
+        try {
+            return await isGatewayAuthenticated();
+        }
+        catch (e) {
+            err = e;
+        }
+    }
+    throw new Error(`Gateway did not authenticate in time due to ${err}`);
 }
 
 // IB GATEWAY
@@ -236,12 +295,11 @@ async function startIBGateway() {
 
     let err;
     for (let i = 1; i < 10; i++) {
-        console.log(`Gateway is not up yet, trying again in ${i}s`)
+        console.log(`Gateway is not up yet, checking again in ${i}s`)
         await new Promise(resolve => setTimeout(resolve, i * 1000));
 
         try {
-            await isGatewayUp();
-            return;
+            return await isGatewayUp();
         }
         catch (e) {
             err = e;
