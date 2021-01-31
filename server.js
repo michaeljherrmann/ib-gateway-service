@@ -4,6 +4,7 @@ const kill       = require('tree-kill');
 const proxy      = require('http-proxy-middleware');
 const puppeteer  = require('puppeteer');
 const { spawn }  = require('child_process');
+const https      = require('https');
 
 // TODO: for now the proxy forwarding doesn't seem to work that well
 //  the ib gateway rejects/doesn't respond to some of those requests
@@ -114,14 +115,14 @@ async function doAuth(username, password) {
     if (authLock) {
         // another request already started authentication, just wait for that
         console.log('Already an ongoing auth request, waiting on that');
-        await authLock;
-        return;
+        return authLock;
     }
     // grab the lock
     authLock = new Promise((resolve, reject) => {
         authLockResolve = resolve;
         authLockReject = reject;
     });
+    authLock.catch(() => {});
 
     browser = await puppeteer.launch({
         // executablePath: 'google-chrome-unstable', // uncomment to use chrome
@@ -192,6 +193,7 @@ async function startIBGateway() {
         startLockResolve = resolve;
         startLockReject = reject;
     });
+    startLock.catch(() => {});
 
     console.log('Starting IB Gateway');
     gateway = spawn(IB_GATEWAY_BIN, [IB_GATEWAY_CONF]);
@@ -202,8 +204,50 @@ async function startIBGateway() {
       gateway = null;
     });
 
-    // wait for 10s to allow process to start
-    return new Promise(resolve => setTimeout(resolve, 10000));
+    const isGatewayUp = () => {
+        return new Promise((resolve, reject) => {
+            console.log('checking if gateway is up')
+            const options = {
+                hostname: IB_GATEWAY_DOMAIN,
+                port: IB_GATEWAY_PORT,
+                method: 'GET',
+                rejectUnauthorized: false, // disable SSL check
+            };
+            https.request(options, (res) => {
+                console.log('statusCode:', res.statusCode);
+                console.log('headers:', res.headers);
+
+                res.on('data', () => {});
+                res.on('end', () => {
+                    if (res.statusCode >= 200 && res.statusCode < 400) {
+                        resolve();
+                    }
+                    else {
+                        reject(new Error(res.statusCode));
+                    }
+                });
+
+            }).on('error', (e) => {
+                console.error(e);
+                reject(e);
+            }).end();
+        });
+    }
+
+    let err;
+    for (let i = 1; i < 10; i++) {
+        console.log(`Gateway is not up yet, trying again in ${i}s`)
+        await new Promise(resolve => setTimeout(resolve, i * 1000));
+
+        try {
+            await isGatewayUp();
+            return;
+        }
+        catch (e) {
+            err = e;
+        }
+    }
+    throw new Error(`Gateway did not start up in time due to ${err}`);
 }
 
 
