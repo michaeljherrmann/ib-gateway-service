@@ -128,7 +128,7 @@ async function handleTwoFactor(page, startDate) {
             throw new Error(`Twilio returned ${messages.length} messages`);
         }
         const message = messages[0];
-        console.log(`Received twilio message: ${message}`);
+        console.log('Retrieved message from twilio');
         const match = message.body.match(/\d{6}/);
         if (match === null) {
             throw new Error(`Could not extract code from message body: "${message.body}"`)
