@@ -20,6 +20,7 @@
     "express": "^4.17.1",
     "http-proxy-middleware": "^0.20.0",
     "puppeteer": "^2.1.1",
-    "tree-kill": "^1.2.2"
+    "tree-kill": "^1.2.2",
+    "twilio": "^3.55.1"
   }
 }

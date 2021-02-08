@@ -1,10 +1,11 @@
 const bodyParser = require('body-parser');
 const express    = require('express');
+const https      = require('https');
 const kill       = require('tree-kill');
 const proxy      = require('http-proxy-middleware');
 const puppeteer  = require('puppeteer');
 const { spawn }  = require('child_process');
-const https      = require('https');
+const twilio      = require('twilio');
 
 // TODO: for now the proxy forwarding doesn't seem to work that well
 //  the ib gateway rejects/doesn't respond to some of those requests
@@ -21,6 +22,9 @@ const IB_GATEWAY_DOMAIN = process.env.IB_GATEWAY_DOMAIN || 'localhost';
 const IB_GATEWAY_PORT = process.env.IB_GATEWAY_PORT || 5000;
 const IB_GATEWAY_SCHEME = process.env.IB_GATEWAY_SCHEME || 'https://';
 const IB_GATEWAY = IB_GATEWAY_SCHEME + IB_GATEWAY_DOMAIN + ':' + IB_GATEWAY_PORT;
+
+const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
+const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 
 // configure app to use bodyParser
 const app = express();
@@ -107,6 +111,50 @@ let authLock;
 let authLockResolve;
 let authLockReject;
 let browser;
+
+async function handleTwoFactor(page, startDate) {
+    const codeInputSelector = '#chlginput';
+    await page.waitForSelector(codeInputSelector);
+
+    console.log('Two factor authentication is required');
+    const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
+
+    async function getCode() {
+        const messages = await client.messages.list({
+            dateSentAfter: startDate,
+            limit: 1,
+        });
+        if (messages.length !== 1) {
+            throw new Error(`Twilio returned ${messages.length} messages`);
+        }
+        const message = messages[0];
+        console.log(`Received twilio message: ${message}`);
+        const match = message.body.match(/\d{6}/);
+        if (match === null) {
+            throw new Error(`Could not extract code from message body: "${message.body}"`)
+        }
+        return match[0];
+    }
+
+    let err;
+    for (let i = 0; i <= 5; i++) {
+        console.log(`Checking for auth SMS in ${i}s`)
+        await new Promise(resolve => setTimeout(resolve, i * 1000));
+        try {
+            const code = await getCode();
+            await page.type(codeInputSelector, code);
+            await page.click('#submitForm');
+            return page.waitForNavigation();
+        }
+        catch (e) {
+            err = e;
+        }
+    }
+
+    // could not complete two factor after retries
+    throw new Error(`Two factor authentication could not complete in time due to ${err}`);
+}
+
 async function doAuth(username, password) {
     if (!gateway) {
         throw new Error('IB gateway needs to be first started before trying to login');
@@ -134,6 +182,7 @@ async function doAuth(username, password) {
     let successMessage = '';
     try {
         // Open login page
+        const startDate = new Date();
         const page = await browser.newPage();
         await page.goto(IB_GATEWAY);
 
@@ -142,8 +191,11 @@ async function doAuth(username, password) {
         await page.type('#password', password);
         await page.click('#submitForm');
 
-        // Wait for redirect
-        await page.waitForNavigation();
+        // Wait for redirect to happen or for two factor to complete
+        await Promise.race([
+            page.waitForNavigation(),
+            handleTwoFactor(page, startDate),
+        ]);
 
         // Verify
         successMessage = await page.evaluate(() => document.body.innerText);
