@@ -6,9 +6,9 @@ const tough = require('tough-cookie');
 const https = require('https');
 const parseStringPromise = require('xml2js').parseStringPromise;
 const NodeRSA = require('node-rsa');
-const RSAKey = require('./rsa');
 
 const Sha1 = require('./sha1');
+const Sms = require('./sms');
 
 
 const ONE = new BigInteger("1", 16);
@@ -19,25 +19,6 @@ const DISPATCHER_PATH = '/sso/Dispatcher';
 
 // SF_VERSION, only support "1" for now, since that seems to be in use
 const VERSION = 1;
-
-const IBSSO = {
-    MESSAGES: {
-        LIVE_ACCOUNT_WITH_PAPER_TRADING: "You have selected the Live Account Mode, but the" +
-            " specified user is a Paper Trading user. Please select the correct Login mode.",
-
-    },
-    CONSTANT: {
-        LOGIN_TYPE_PROD: 1,
-        LOGIN_TYPE_PAPER: 2,
-        SECOND_FACTOR_TYPE_OTP: "4.2",
-        OTP_DELIVERY_TYPE_SMS: 1,
-        OTP_DELIVERY_TYPE_VOICE: 2,
-        OTP_DELIVERY_TYPE_EMAIL: 4,
-    },
-    isPaper: {},
-    otpSelectTimer: null,
-    otpSelectTimerTimeout: 60 * 1000, // 60s
-}
 
 //SF types
 const SSC = "3";
@@ -51,17 +32,17 @@ const PLAT_GOLD = "5";
 const TSC = "6";
 const SMS = "4.2";
 
+
 class Authenticator {
+    static SMS = SMS;
+    // static IBKEY_ANDROID = IBKEY_ANDROID; TODO
+    // static IBKEY_IOS = IBKEY_ANDROID; TODO
     #username = '';
     #password = '';
     #rng = new SecureRandom();
     #suppLongPwd = false;
-
-    #ibsso = {
-        messages: {},
-        constant: {},
-        isPaper: {},
-    };
+    #isPaper = null;
+    #startDate = null;
 
     // Diffie–Hellman
     #N = new BigInteger("d4c7f8a2b32c11b8fba9581ec4ba4f1b04215642ef7355e37c0fc0443ef756ea2c6b8eeb755a1c723027663caa265ef785b8ff6a9b35227a52d86633dbdfca43", 16);
@@ -80,7 +61,6 @@ class Authenticator {
     #B = null;
     #submitEnckx = false;
     #serverRsaKey = new NodeRSA();
-    #rsaKey = new RSAKey();
     #k = null;
 
     // complete authentication
@@ -89,39 +69,33 @@ class Authenticator {
     #Sc = null;
     #K = null;
     #M = '0';
+    #secondFactorMethod = null;
 
     // session
     #M2 = null;
     #serverM2=null;
     #sessionKey = null;
 
-    constructor(username, password, baseUrl) {
+    static async doAuth({username, password, baseUrl, secondFactorMethod}) {
+        const a = new Authenticator(username, password, baseUrl, secondFactorMethod);
+        await a.initialize();
+        return await a.completeAuthentication();
+    }
+
+    constructor(username, password, baseUrl, secondFactorMethod = SMS) {
+        this.#secondFactorMethod = secondFactorMethod;
         this.#username = username;
         this.#password = password;
         this.session = axios.create({
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.90 Safari/537.36',
-                'Accept': '*/*',
-                'sec-ch-ua': '"Google Chrome";v="89", "Chromium";v="89", ";Not A Brand";v="99"',
-                'sec-ch-ua-mobile': '?0',
-                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-                'Origin': 'https://localhost:5000',
-                'Sec-Fetch-Site': 'same-origin',
-                'Sec-Fetch-Mode': 'cors',
-                'Sec-Fetch-Dest': 'empty',
-                'Referer': 'https://localhost:5000/sso/Login?forwardTo=22&RL=1&ip2loc=US',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'Accept-Language': 'en-US,en;q=0.9',
-            },
             baseURL: baseUrl,
-            withCredentials: true, // TODO necessary?
+            withCredentials: true,
             httpsAgent: new https.Agent({
                 rejectUnauthorized: false,
                 keepAlive: true,
             }),
         });
 
-        // Set up the cookie jar TODO necessary?
+        // Set up the cookie jar
         axiosCookieJarSupport(this.session);
         this.session.defaults.jar = new tough.CookieJar();
         this.session.defaults.ignoreCookieErrors = true;
@@ -133,11 +107,16 @@ class Authenticator {
         });
     }
 
-    async initialize() {
-        // GET to the base url to set initial cookies
-        const r = await this.session.get('/sso/Login?forwardTo=22&RL=1&ip2loc=US');
+    async initialize(secondTry) {
+        if (!secondTry) {
+            console.log('Authenticator initializing');
+        }
 
-        // need to create the ssoId cookie TODO necessary?
+        this.#startDate = new Date();
+        // GET to the base url to set initial cookies
+        await this.session.get('/');
+
+        // create the ssoId cookie
         const expDate = new Date();
         expDate.setTime(expDate.getTime() + (60 * 60 * 24 * 365 * 10 * 1000)); // 10 years
         const ssoId = Math.random().toString(36).substring(2) + expDate.getTime().toString(36);
@@ -147,27 +126,6 @@ class Authenticator {
             expires: expDate,
         });
         this.session.defaults.jar.setCookieSync(cookie, this.session.defaults.baseURL);
-
-        // TODO this works
-        // const data = new URLSearchParams();
-        // data.append('ACTION', 'COMPLETEAUTH');
-        // data.append('APP_NAME', '');
-        // data.append('USER', 'cctst0007');
-        // data.append('ACCT', '');
-        // data.append('M1', 'd82622fcfc0d0379109b7c35f04cd256fc394ed7');
-        // data.append('VERSION', VERSION.toString());
-        // data.append('EKX', '0687f984af2d6460509156b397744e9e9e261f7e6f51be4f995c8290388ebc23a291573c53f6415a99f8ece814e488640c1930a245cf31fa7b92d44e525ae093e924c75ee26f4b7613e4546702d0d8c9f93eeb0cc5a03602636c655ad2dc44bc1adba8f01b6b0f5f91011dc4e72d0cb2aa653583bdd500abb0f8a485c01a7f91');
-        // const session = axios.create({
-        //     baseURL: 'https://localhost:5000',
-        //     httpsAgent: new https.Agent({
-        //         rejectUnauthorized: false,
-        //     }),
-        // });
-        // const response = await session.post(PATH, data);
-        // console.log(response);
-        // return;
-
-
 
         // Initialize the shared key for rsa
         const data = new URLSearchParams();
@@ -179,9 +137,12 @@ class Authenticator {
         data.append('ACCT', '');
         data.append('A', this.#A.toString(16));
         const response = await this.session.post(this.path, data);
-        const allGood = await this._parseIbAuthResponse(response);
-        if (!allGood) {
-            await this.initialize();
+        const requiresInitializeAgain = await this._parseIbAuthResponse(response);
+        if (requiresInitializeAgain) {
+            if (secondTry) {
+                throw new Error(`initialize failed after second try: ${response.data}`);
+            }
+            await this.initialize(true);
             return;
         }
 
@@ -203,13 +164,12 @@ class Authenticator {
         data.append('M1', this.#M);
         data.append('VERSION', VERSION.toString());
         if (this.#submitEnckx) {
-            // const ekx = this.#serverRsaKey.encrypt(Buffer.from(this.#K, 'hex'), 'hex', 'utf8');
-            const ekx = this.#rsaKey.encrypt(this.#K);
+            const ekx = this.#serverRsaKey.encrypt(this.#K, 'hex', 'utf8');
             data.append('EKX', ekx);
         }
 
         const response = await this.session.post(this.path, data);
-        await this._parseCompleteAuthentication(response);
+        return await this._parseCompleteAuthentication(response);
     }
 
     get username() {
@@ -226,7 +186,6 @@ class Authenticator {
     }
 
     get path() {
-        // TODO necessary?
         return PATH + '?' + Math.floor(Math.random()*100001);
     }
 
@@ -250,7 +209,7 @@ class Authenticator {
 
         if (data.paper) {
             const paper = data.paper[0];
-            IBSSO.isPaper[this.#username] = (paper === 'true');
+            this.#isPaper = (paper === 'true');
         }
 
         const newg = new BigInteger(data.g[0], 10);
@@ -266,18 +225,17 @@ class Authenticator {
             n: Buffer.from(data.rsapub[0], 'hex'),
             e: 3,
         }, 'components-public');
-        this.#rsaKey.setPublic(data.rsapub[0], '3');
 
-        let defaultParams = true;
+        let requiresInitializeAgain = false;
         if (!this.#g.equals(newg)) {
-          defaultParams = false;
+          requiresInitializeAgain = true;
           this.#g = newg;
         }
         if(!this.#N.equals(newN)) {
-            defaultParams = false;
+            requiresInitializeAgain = true;
             this.#N = newN;
         }
-        return defaultParams;
+        return requiresInitializeAgain;
     }
 
     async _parseCompleteAuthentication(response) {
@@ -288,12 +246,6 @@ class Authenticator {
             this.#serverM2 = data.M2[0];
         }
         this.#M2 = this._calculate_M2(this.#A, this.#M, this.#K);
-
-        let twoFactorType = null;
-        if (xml.ib_auth_res.two_factor?.type) {
-            twoFactorType = xml.ib_auth_res.two_factor.type[0];
-        }
-
         if (this.#M2 !== this.#serverM2) {
             if (xml.ib_auth_res.auth_info[0].reached_max_login[0] === "true") {
                 throw new Error('Invalid username and password combination, reached max limit');
@@ -302,25 +254,23 @@ class Authenticator {
         }
 
         this.#sessionKey = this._calculateSessionKey(this.#B, this.#K);
+        this._storeSessionKey(this.#sessionKey);
 
-        if (twoFactorType) {
-            // handling two factor
-            await this._authenticateTwoFactor(twoFactorType, SMS);
-            return;
-        }
-
-        const sfTypes = xml.ib_auth_res.sftypes[0];
+        const sfTypes = xml.ib_auth_res.sftypes;
         if (sfTypes) {
             // two factor
-            const available = sfTypes.split(',');
+            const available = sfTypes[0].split(',');
             if (available.length > 1) {
                 console.warn('more than one two factor available, using SMS');
             }
-            if (available.indexOf(SMS) === -1) {
-                throw new Error('Authenticator only supports SMS two factor for now');
+            if (available.indexOf(this.#secondFactorMethod) === -1) {
+                throw new Error(`${this.#secondFactorMethod} is not valid for the account, only: ${available} are available`);
             }
             // trigger sms to be sent
-            await this._completeTwoFactorAuthentication(SMS);
+            return await this._completeTwoFactorAuthentication(this.#secondFactorMethod);
+        }
+        else {
+            return await this._finish('');
         }
     }
 
@@ -334,13 +284,15 @@ class Authenticator {
         data.append('VERSION', VERSION.toString());
         data.append('SF', selectedSF);
         const response = await this.session.post(this.path, data);
-        await this._parseCompleteAuthentication(response);
+        const xml = await parseStringPromise(response.data);
+        const twoFactorType = xml.ib_auth_res.two_factor[0].type[0];
+        return await this._authenticateTwoFactor(twoFactorType, SMS);
     }
 
     async _authenticateTwoFactor(twoFactorType, selectedSF) {
         let challenge = '';
         if (selectedSF === SMS) {
-            challenge = await this._parseTwilioSMS();
+            challenge = await Sms.getChallenge(this.#startDate);
         }
         if (twoFactorType === 'IBTK') {
             throw new Error('case not handled');
@@ -354,16 +306,11 @@ class Authenticator {
         data.append('RESPONSE', challenge);
         data.append('VERSION', VERSION.toString());
         data.append('SF', selectedSF);
-        const response = await this.session.post(this.path, data);
-        return await this._authenticateTwoFactorHandler(response, challenge);
+        await this.session.post(this.path, data);
+        return await this._finish(challenge);
     }
 
-    async _parseTwilioSMS() {
-        // TODO
-        return '0';
-    }
-
-    async _authenticateTwoFactorHandler(challenge) {
+    async _finish(challenge) {
         const data = new URLSearchParams();
         data.append('user_name', this.#username);
         data.append('password', 'xxxxxxxxxxxxxxxxxxxxxxxx');
@@ -373,7 +320,7 @@ class Authenticator {
         data.append('M1', this.#M);
         data.append('M2', this.#M2);
         const response = await this.session.post(DISPATCHER_PATH, data);
-        return response;
+        return response.data === 'Client login succeeds';
     }
 
     _calculate_k() {
@@ -525,6 +472,14 @@ class Authenticator {
         hashIn += this._verifyHexVal(B);
         hashIn += this._verifyHexVal(K);
         return Sha1.hashFromHex(hashIn);
+    }
+
+    _storeSessionKey(sessionKey) {
+        const cookie = new tough.Cookie({
+            key: 'XYZAB_AM.LOGIN',
+            value: sessionKey,
+        });
+        this.session.defaults.jar.setCookieSync(cookie, this.session.defaults.baseURL);
     }
 
     /**

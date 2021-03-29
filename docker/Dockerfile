@@ -43,10 +43,10 @@ COPY ./package.json ./package.json
 RUN npm ci
 
 # Copy server code
-COPY ./server.js ./server.js
+COPY ./server ./server
 
 # Use dumb-init to prevent zombie processes from puppeteer
 ENTRYPOINT ["/usr/bin/dumb-init", "--"]
 
 # Run service
-CMD ["node", "server.js"]
+CMD ["node", "server"]

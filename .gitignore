@@ -2,3 +2,5 @@
 *.pyc
 *.pyo
 node_modules/
+server/auth/original/
+server/auth/test-live.js

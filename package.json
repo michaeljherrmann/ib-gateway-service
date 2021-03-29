@@ -2,9 +2,9 @@
   "name": "ib-gateway-service",
   "version": "1.0.0",
   "description": "A small node server to wrap the IBKR Client Portal Web gateway to programatically launch and login to the gateway. More info at https://interactivebrokers.github.io/cpwebapi/",
-  "main": "server.js",
+  "main": "server/index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "jest --watch"
   },
   "repository": {
     "type": "git",
@@ -17,10 +17,18 @@
   },
   "homepage": "https://github.com/michaeljherrmann/ib-gateway-service#readme",
   "dependencies": {
+    "axios": "^0.21.1",
+    "axios-cookiejar-support": "^1.0.1",
     "express": "^4.17.1",
     "http-proxy-middleware": "^0.20.0",
-    "puppeteer": "^2.1.1",
+    "jsbn": "^1.1.0",
+    "node-rsa": "^1.1.1",
+    "tough-cookie": "^4.0.0",
     "tree-kill": "^1.2.2",
-    "twilio": "^3.55.1"
+    "twilio": "^3.55.1",
+    "xml2js": "^0.4.23"
+  },
+  "devDependencies": {
+    "jest": "^26.6.3"
   }
 }
