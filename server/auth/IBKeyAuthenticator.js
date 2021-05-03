@@ -5,20 +5,21 @@ const axiosCookieJarSupport = require('axios-cookiejar-support').default;
 const tough = require('tough-cookie');
 const https = require('https');
 const parseStringPromise = require('xml2js').parseStringPromise;
+const readline = require('readline');
 
 const RSAKey = require('./rsa');
+const OCRA = require('./ocra');
 const Sha1 = require('./sha1');
-const Sms = require('./sms');
 
 
 const ONE = new BigInteger("1", 16);
 const TWO = new BigInteger("2", 16);
 const THREE = new BigInteger("3", 16);
-const PATH = '/sso/Authenticator';
-const DISPATCHER_PATH = '/sso/Dispatcher';
+const AM_PATH = '/sso/AuthenticatorMgr';
+const DAA_PATH = '/sso/DynamicAuthenticatorAuth';
 
 // SF_VERSION, only support "1" for now, since that seems to be in use
-const VERSION = 1;
+const VERSION = '1';
 
 //SF types
 const SSC = "3";
@@ -31,18 +32,16 @@ const DSC_PLUS = "5.1";
 const PLAT_GOLD = "5";
 const TSC = "6";
 const SMS = "4.2";
+const IMEI = "48f8ede2193efa5f";
 
 
-class Authenticator {
+class IBKeyAuthenticator {
     static SMS = SMS;
-    // static IBKEY_ANDROID = IBKEY_ANDROID; TODO
-    // static IBKEY_IOS = IBKEY_ANDROID; TODO
     #username = '';
     #password = '';
     #rng = new SecureRandom();
     #suppLongPwd = false;
     #isPaper = null;
-    #startDate = null;
 
     // Diffie–Hellman
     #N = new BigInteger("d4c7f8a2b32c11b8fba9581ec4ba4f1b04215642ef7355e37c0fc0443ef756ea2c6b8eeb755a1c723027663caa265ef785b8ff6a9b35227a52d86633dbdfca43", 16);
@@ -76,10 +75,12 @@ class Authenticator {
     #serverM2=null;
     #sessionKey = null;
 
-    static async doAuth({username, password, baseUrl, secondFactorMethod}) {
-        const a = new Authenticator(username, password, baseUrl, secondFactorMethod);
+    static async setupIBKey({username, password, baseUrl}) {
+        const a = new IBKeyAuthenticator(username, password, baseUrl, SMS);
         await a.initialize();
-        return await a.completeAuthentication();
+        await a.completeAuthentication();
+        await a.isUserEnabled();
+        return await a.generateOcra();
     }
 
     constructor(username, password, baseUrl, secondFactorMethod = SMS) {
@@ -106,34 +107,25 @@ class Authenticator {
 
     async initialize(secondTry) {
         if (!secondTry) {
-            console.log('Authenticator initializing');
+            console.log('IBKey Authenticator initializing');
         }
 
-        this.#startDate = new Date();
-        // GET to the base url to set initial cookies
-        await this.session.get('/');
-
-        // create the ssoId cookie
-        const expDate = new Date();
-        expDate.setTime(expDate.getTime() + (60 * 60 * 24 * 365 * 10 * 1000)); // 10 years
-        const ssoId = Math.random().toString(36).substring(2) + expDate.getTime().toString(36);
-        const cookie = new tough.Cookie({
-            key: 'SBID',
-            value: ssoId,
-            expires: expDate,
-        });
-        this.session.defaults.jar.setCookieSync(cookie, this.session.defaults.baseURL);
+        // POST to set initial cookies
+        let data = new URLSearchParams();
+        data.append('ACTION', 'INIT');
+        data.append('VERSION', '3');
+        data.append('MODE', 'ENABLE_USER');
+        let response = await this.session.post(AM_PATH, data);
 
         // Initialize the shared key for rsa
-        const data = new URLSearchParams();
+        data = new URLSearchParams();
         data.append('ACTION', 'INIT');
-        data.append('APP_NAME', '');
-        data.append('MODE', 'NORMAL');
-        data.append('FORCE_LOGIN', '');
+        data.append('RESP_TYPE', 'XML'); // also supports JSONP
         data.append('USER', this.#username);
-        data.append('ACCT', '');
         data.append('A', this.#A.toString(16));
-        const response = await this.session.post(this.path, data);
+        data.append('VERSION', VERSION);
+        response = await this.session.post(DAA_PATH, data);
+
         const requiresInitializeAgain = await this._parseIbAuthResponse(response);
         if (requiresInitializeAgain) {
             if (secondTry) {
@@ -155,17 +147,15 @@ class Authenticator {
 
         const data = new URLSearchParams();
         data.append('ACTION', 'COMPLETEAUTH');
-        data.append('APP_NAME', '');
-        data.append('USER', this.username);
-        data.append('ACCT', '');
         data.append('M1', this.#M);
-        data.append('VERSION', VERSION.toString());
+        data.append('RESP_TYPE', 'XML');
+        data.append('VERSION', VERSION);
         if (this.#submitEnckx) {
             const ekx = this.#serverRsaKey.encrypt(this.#K);
             data.append('EKX', ekx);
         }
 
-        const response = await this.session.post(this.path, data);
+        const response = await this.session.post(DAA_PATH, data);
         return await this._parseCompleteAuthentication(response);
     }
 
@@ -183,7 +173,89 @@ class Authenticator {
     }
 
     get path() {
-        return PATH + '?' + Math.floor(Math.random()*100001);
+        return PATH;
+    }
+
+    async isUserEnabled() {
+        let data = new URLSearchParams();
+        data.append('ACTION', 'IS_USER_ENABLED');
+        data.append('OS', 'Android+9');
+        let response = await this.session.post(AM_PATH, data);
+        if (!response.data.hasOwnProperty('USER_ALLOWED') || response.data.USER_ALLOWED !== 0) {
+            throw new Error(`checking user enabled returned unexpected response: ${response.data}`);
+        }
+    }
+
+    async generateOcra() {
+        let data = new URLSearchParams();
+        data.append('ACTION', 'GET_PARAMS');
+        let response = await this.session.post(AM_PATH, data);
+
+        const ocraKey = this._createOcraKey(this.#K, IMEI);
+        await this.completeOcraSetup(ocraKey, response.data);
+
+        return ocraKey;
+    }
+
+    _createOcraKey(K, IMEI) {
+        const sk = Sha1.hashFromHex(K);
+        return Sha1.hash(sk, IMEI);
+    }
+
+    async completeOcraSetup(ocraKey, ocraParams) {
+        // get pin
+        const pin = await new Promise(resolve => {
+            const readlineInterface = readline.createInterface({
+                input: process.stdin,
+                output: process.stdout,
+            });
+            readlineInterface.question(`Please create a pin for IBKey:`, input => {
+                readlineInterface.close();
+                resolve(input);
+            });
+        });
+
+        const counter = '1';
+        const challengeResponse = this._generateChallengeResponse(
+            pin, counter, ocraParams.CHALLENGE, ocraParams.ALGO, ocraKey
+        );
+
+        const rsa = new RSAKey();
+        rsa.setPublic(ocraParams.MODULUS, ocraParams.EXPONENT);
+
+        const ePin = rsa.encrypt(pin);
+        const eDeviceId = rsa.encrypt(IMEI);
+
+        const data = new URLSearchParams();
+        data.append('ACTION', 'COMPLETE_SETUP');
+        data.append('CHALLENGE_RESPONSE', challengeResponse);
+        data.append('E_PIN', ePin);
+        data.append('E_DEVICE_ID', eDeviceId);
+        data.append('OS', 'Android+9');
+        data.append('COUNTRY_CODE', 'US');
+        data.append('CARRIER_NAME', 'T-Mobile');
+        data.append('APP_VERSION', 'IBTWS_8.4.348');
+        data.append('STORAGE', '0');
+        data.append('KEY_TYPE', 'IKEY');
+        const response = await this.session.post(AM_PATH, data);
+        if (!response.data.hasOwnProperty('ACTIVATION_RESULT') || response.data.ACTIVATION_RESULT !== true) {
+            throw new Error(`COMPLETE SETUP returned: ${response.data}`);
+        }
+        return response.data.SERIAL_NO;
+    }
+
+    _generateChallengeResponse(pin, counter, challenge, algo, ocraKey) {
+        const hexChallenge = parseInt(challenge).toString(16);
+        const sha1Pin = Sha1.hash(pin);
+
+        return OCRA.generateOCRA(
+            algo,
+            ocraKey,
+            counter,
+            hexChallenge,
+            sha1Pin
+        );
+
     }
 
     _randomizeA() {
@@ -217,8 +289,10 @@ class Authenticator {
         this.#B = new BigInteger(data.B[0], 16);
         this.#suppLongPwd = (data.lp[0] === 'true');
 
-        this.#submitEnckx = true;
-        this.#serverRsaKey.setPublic(data.rsapub[0], 3);
+        if (data.rsapub[0]) {
+            this.#serverRsaKey.setPublic(data.rsapub[0], 3);
+            this.#submitEnckx = true;
+        }
 
         let requiresInitializeAgain = false;
         if (!this.#g.equals(newg)) {
@@ -255,7 +329,7 @@ class Authenticator {
             // two factor
             const available = sfTypes[0].split(',');
             if (available.length > 1) {
-                console.warn('more than one two factor available');
+                console.warn('more than one two factor available, using SMS');
             }
             if (available.indexOf(this.#secondFactorMethod) === -1) {
                 throw new Error(`${this.#secondFactorMethod} is not valid for the account, only: ${available} are available`);
@@ -272,49 +346,55 @@ class Authenticator {
         const data = new URLSearchParams();
         data.append('ACTION', 'COMPLETEAUTH_1');
         data.append('APP_NAME', '');
-        data.append('USER', this.#username);
-        data.append('ACCT', '');
-        data.append('M1', this.#M);
-        data.append('VERSION', VERSION.toString());
+        data.append('RESP_TYPE', 'XML');
+        data.append('VERSION', VERSION);
         data.append('SF', selectedSF);
-        const response = await this.session.post(this.path, data);
+        const response = await this.session.post(DAA_PATH, data);
         const xml = await parseStringPromise(response.data);
         const twoFactorType = xml.ib_auth_res.two_factor[0].type[0];
-        return await this._authenticateTwoFactor(twoFactorType, selectedSF);
+        // return await this._authenticateTwoFactor(twoFactorType, SMS);
+        return await this._secondFactorConfig(twoFactorType);
+    }
+
+    async _secondFactorConfig(twoFactorType) {
+        const data = new URLSearchParams();
+        data.append('ACTION', 'SECOND_FACTOR_CONFIG');
+        // const response = await this.session.post(AM_PATH + '?' + data.toString());
+        const response = await this.session.post(AM_PATH, data);
+        return await this._authenticateTwoFactor(twoFactorType, SMS);
     }
 
     async _authenticateTwoFactor(twoFactorType, selectedSF) {
         let challenge = '';
         if (selectedSF === SMS) {
-            challenge = await Sms.getChallenge(this.#startDate);
+            challenge = await new Promise(resolve => {
+                const readlineInterface = readline.createInterface({
+                    input: process.stdin,
+                    output: process.stdout,
+                });
+                readlineInterface.question(`Please enter SMS code:`, input => {
+                    readlineInterface.close()
+                    resolve(input);
+                });
+            });
         }
+
         if (twoFactorType === 'IBTK') {
             throw new Error('case not handled');
         }
 
         const data = new URLSearchParams();
         data.append('ACTION', 'COMPLETETWOFACT');
-        data.append('APP_NAME', '');
         data.append('USER', this.#username);
-        data.append('ACCT', '');
         data.append('RESPONSE', challenge);
+        data.append('RESP_TYPE', 'JSON');
         data.append('VERSION', VERSION.toString());
         data.append('SF', selectedSF);
-        await this.session.post(this.path, data);
-        return await this._finish(challenge);
-    }
-
-    async _finish(challenge) {
-        const data = new URLSearchParams();
-        data.append('user_name', this.#username);
-        data.append('password', 'xxxxxxxxxxxxxxxxxxxxxxxx');
-        data.append('chlginput', challenge);
-        data.append('loginType', '0');
-        data.append('forwardTo', '22');
-        data.append('M1', this.#M);
-        data.append('M2', this.#M2);
-        const response = await this.session.post(DISPATCHER_PATH, data);
-        return response.data === 'Client login succeeds';
+        const response = await this.session.post(DAA_PATH, data);
+        if (!response.data.hasOwnProperty('auth_res') || response.data.auth_res !== "true") {
+            throw new Error(`Error completing two factor, received: ${JSON.stringify(response.data)}`);
+        }
+        return true;
     }
 
     _calculate_k() {
@@ -470,7 +550,7 @@ class Authenticator {
 
     _storeSessionKey(sessionKey) {
         const cookie = new tough.Cookie({
-            key: 'XYZAB_AM.LOGIN',
+            key: 'XYZAB.LOGIN',
             value: sessionKey,
         });
         this.session.defaults.jar.setCookieSync(cookie, this.session.defaults.baseURL);
@@ -514,4 +594,4 @@ class Authenticator {
 
 }
 
-module.exports = Authenticator;
+module.exports = IBKeyAuthenticator;

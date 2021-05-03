@@ -6,9 +6,9 @@ class Sha1 {
         return Sha1.hash(buffer);
     }
 
-    static hash(input) {
+    static hash(...input) {
         const shasum = crypto.createHash('sha1');
-        shasum.update(input);
+        input.forEach(i => shasum.update(i));
         return shasum.digest('hex');
     }
 

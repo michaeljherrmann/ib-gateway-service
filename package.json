@@ -22,7 +22,7 @@
     "express": "^4.17.1",
     "http-proxy-middleware": "^0.20.0",
     "jsbn": "^1.1.0",
-    "node-rsa": "^1.1.1",
+    "jssha": "2.2.0",
     "tough-cookie": "^4.0.0",
     "tree-kill": "^1.2.2",
     "twilio": "^3.55.1",
