@@ -66,7 +66,7 @@ function RSASetPublic(N,E) {
     this.e = parseInt(E,16);
   }
   else
-    alert("Invalid RSA public key");
+    throw new Error(`Invalid RSA public key: N: "${N}", E: ${E}`);
 }
 
 // Perform raw public operation on "x": return x^e (mod n)

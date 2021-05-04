@@ -4,7 +4,8 @@
   "description": "A small node server to wrap the IBKR Client Portal Web gateway to programatically launch and login to the gateway. More info at https://interactivebrokers.github.io/cpwebapi/",
   "main": "server/index.js",
   "scripts": {
-    "test": "jest --watch"
+    "test": "jest --watch",
+    "setup-ibkey": "node server/auth/setupIBKey.js"
   },
   "repository": {
     "type": "git",
@@ -23,6 +24,7 @@
     "http-proxy-middleware": "^0.20.0",
     "jsbn": "^1.1.0",
     "jssha": "2.2.0",
+    "prompt": "^1.1.0",
     "tough-cookie": "^4.0.0",
     "tree-kill": "^1.2.2",
     "twilio": "^3.55.1",

@@ -1,5 +1,4 @@
 const BigInteger = require('jsbn').BigInteger;
-const NodeRSA = require('node-rsa');
 
 const Authenticator = require('./Authenticator');
 
@@ -9,27 +8,6 @@ const PASSWORD = 'pass';
 const URL = ''; // https://localhost:5000
 
 describe('Authenticator', () => {
-    test.skip('rsa encryption', () => {
-        const rsa = new NodeRSA();
-        rsa.setOptions({
-            // environment: 'browser',
-            // encryptionScheme: 'pkcs1',
-            // signingScheme: 'pkcs1',
-        })
-        const pubKey = 'AA9BEF363E28DE8CFCEFA08861AC588E582EED93416ED436BE75CEDBB41F262CE37613A18F87D13B2F28621F9D7B9AC6AF3310E88C4C6EBEFCA22214419E3C3F6F44ED7538339B81410E1EC73565B201031B74DA3DA9C3F9453DFB79912315877D63AEB7BDFF28C9124FC11D5B669553646D40CEE23754E5D8FE726788276059';
-        const e = 3;
-        const K = '6606a738b16f296c6110370618dd9ac761005b5b';
-        rsa.importKey({
-            n: Buffer.from(pubKey, 'hex'),
-            e: e,
-        }, 'components-public');
-
-        const res = rsa.encrypt(Buffer.from(K, 'hex'), 'hex', 'utf8')
-        // const res = rsa.encrypt(K, 'hex', 'utf8')
-
-        const expected = '451cc0c20b883cb29b266bc3f68693ce790025417bfd4d4e6d67b0082d6998f61e54c90c44b45cfb91a98ddb1bb3a857ecbbcffb0c28b2f758de2a2af24df7667020e316eed3f9cb26c527061a91364231b54ed8911faf94dd6fbbf0d4180e05adaebeea604bebd25cca810d812f47a7824aa96d93c4ad6a1ac0072ec39006b4';
-        expect(res).toEqual(expected);
-    });
     test('calculates x', () => {
         const auth = new Authenticator(USERNAME, PASSWORD, URL);
         const salt = new BigInteger('5828aedc', 16);

@@ -5,7 +5,7 @@ const axiosCookieJarSupport = require('axios-cookiejar-support').default;
 const tough = require('tough-cookie');
 const https = require('https');
 const parseStringPromise = require('xml2js').parseStringPromise;
-const readline = require('readline');
+const prompt = require('prompt');
 
 const RSAKey = require('./rsa');
 const OCRA = require('./ocra');
@@ -204,16 +204,16 @@ class IBKeyAuthenticator {
 
     async completeOcraSetup(ocraKey, ocraParams) {
         // get pin
-        const pin = await new Promise(resolve => {
-            const readlineInterface = readline.createInterface({
-                input: process.stdin,
-                output: process.stdout,
-            });
-            readlineInterface.question(`Please create a pin for IBKey:`, input => {
-                readlineInterface.close();
-                resolve(input);
-            });
-        });
+        prompt.start();
+        const schema = {
+            properties: {
+                pin: {
+                    description: 'Please create a pin for IBKey',
+                    required: true
+                }
+            }
+        };
+        const {pin} = await prompt.get(schema);
 
         const counter = '1';
         const challengeResponse = this._generateChallengeResponse(
@@ -255,7 +255,6 @@ class IBKeyAuthenticator {
             hexChallenge,
             sha1Pin
         );
-
     }
 
     _randomizeA() {
@@ -274,6 +273,9 @@ class IBKeyAuthenticator {
 
     async _parseIbAuthResponse(response) {
         const xml = await parseStringPromise(response.data);
+        if (xml.ib_auth_res.error) {
+            throw new Error(`Submitting username/password returned: ${xml.ib_auth_res.error[0]}`);
+        }
         const data = xml.ib_auth_res.ini_params[0];
 
         if (data.paper) {
@@ -290,7 +292,7 @@ class IBKeyAuthenticator {
         this.#suppLongPwd = (data.lp[0] === 'true');
 
         if (data.rsapub[0]) {
-            this.#serverRsaKey.setPublic(data.rsapub[0], 3);
+            this.#serverRsaKey.setPublic(data.rsapub[0], '3');
             this.#submitEnckx = true;
         }
 
@@ -367,16 +369,17 @@ class IBKeyAuthenticator {
     async _authenticateTwoFactor(twoFactorType, selectedSF) {
         let challenge = '';
         if (selectedSF === SMS) {
-            challenge = await new Promise(resolve => {
-                const readlineInterface = readline.createInterface({
-                    input: process.stdin,
-                    output: process.stdout,
-                });
-                readlineInterface.question(`Please enter SMS code:`, input => {
-                    readlineInterface.close()
-                    resolve(input);
-                });
-            });
+            prompt.start();
+            const schema = {
+                properties: {
+                    challenge: {
+                        description: 'Please enter SMS verification code from IB',
+                        required: true
+                    }
+                }
+            };
+            const result = await prompt.get(schema);
+            challenge = result.challenge;
         }
 
         if (twoFactorType === 'IBTK') {

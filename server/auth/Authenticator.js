@@ -6,6 +6,7 @@ const tough = require('tough-cookie');
 const https = require('https');
 const parseStringPromise = require('xml2js').parseStringPromise;
 
+const OCRA = require('./ocra');
 const RSAKey = require('./rsa');
 const Sha1 = require('./sha1');
 const Sms = require('./sms');
@@ -35,8 +36,8 @@ const SMS = "4.2";
 
 class Authenticator {
     static SMS = SMS;
-    // static IBKEY_ANDROID = IBKEY_ANDROID; TODO
-    // static IBKEY_IOS = IBKEY_ANDROID; TODO
+    static IBKEY_ANDROID = IBKEY_ANDROID;
+    static IBKEY_IOS = IBKEY_ANDROID;
     #username = '';
     #password = '';
     #rng = new SecureRandom();
@@ -70,20 +71,33 @@ class Authenticator {
     #K = null;
     #M = '0';
     #secondFactorMethod = null;
+    #ocraSecret = null;
+    #ocraPin = null;
+    #ocraCounter = null;
+    #ocraAlgo = 'OCRA-1:HOTP-SHA1-8:C-QN06-PSHA1';
 
     // session
     #M2 = null;
     #serverM2=null;
     #sessionKey = null;
 
-    static async doAuth({username, password, baseUrl, secondFactorMethod}) {
-        const a = new Authenticator(username, password, baseUrl, secondFactorMethod);
+    static async doAuth({username, password, baseUrl, secondFactorMethod, ocraSecret, ocraPin, ocraCounter}) {
+        const a = new Authenticator(username, password, baseUrl, secondFactorMethod, ocraSecret, ocraPin, ocraCounter);
         await a.initialize();
         return await a.completeAuthentication();
     }
 
-    constructor(username, password, baseUrl, secondFactorMethod = SMS) {
+    constructor(username, password, baseUrl, secondFactorMethod = SMS, ocraSecret, ocraPin, ocraCounter) {
         this.#secondFactorMethod = secondFactorMethod;
+        this.#ocraSecret = ocraSecret;
+        this.#ocraPin = ocraPin;
+        this.#ocraCounter = ocraCounter;
+        if (this.#secondFactorMethod === IBKEY_IOS || this.#secondFactorMethod === IBKEY_ANDROID) {
+            if (!this.#ocraSecret || !this.#ocraPin || !this.#ocraCounter) {
+                throw new Error('OCRA secret, pin and counter are required for IBKEY auth');
+            }
+        }
+
         this.#username = username;
         this.#password = password;
         this.session = axios.create({
@@ -218,7 +232,7 @@ class Authenticator {
         this.#suppLongPwd = (data.lp[0] === 'true');
 
         this.#submitEnckx = true;
-        this.#serverRsaKey.setPublic(data.rsapub[0], 3);
+        this.#serverRsaKey.setPublic(data.rsapub[0], '3');
 
         let requiresInitializeAgain = false;
         if (!this.#g.equals(newg)) {
@@ -279,14 +293,25 @@ class Authenticator {
         data.append('SF', selectedSF);
         const response = await this.session.post(this.path, data);
         const xml = await parseStringPromise(response.data);
-        const twoFactorType = xml.ib_auth_res.two_factor[0].type[0];
-        return await this._authenticateTwoFactor(twoFactorType, selectedSF);
+        const twoFactorData = xml.ib_auth_res.two_factor[0];
+        return await this._authenticateTwoFactor(twoFactorData, selectedSF);
     }
 
-    async _authenticateTwoFactor(twoFactorType, selectedSF) {
-        let challenge = '';
-        if (selectedSF === SMS) {
-            challenge = await Sms.getChallenge(this.#startDate);
+    async _authenticateTwoFactor(twoFactorData, selectedSF) {
+        const twoFactorType = twoFactorData.type[0];
+        let challengeResponse = '';
+        if (twoFactorType === 'SWCR' && (selectedSF === IBKEY_ANDROID || selectedSF === IBKEY_IOS)) {
+            const challenge = twoFactorData.challenge[0].replace(/\s/g, '');
+            challengeResponse = this._generateChallengeResponse(
+                this.#ocraPin,
+                this.#ocraCounter,
+                challenge,
+                this.#ocraAlgo,
+                this.#ocraSecret,
+            );
+        }
+        else if (twoFactorType === 'SWTK' && selectedSF === SMS) {
+            challengeResponse = await Sms.getChallenge(this.#startDate);
         }
         if (twoFactorType === 'IBTK') {
             throw new Error('case not handled');
@@ -297,24 +322,37 @@ class Authenticator {
         data.append('APP_NAME', '');
         data.append('USER', this.#username);
         data.append('ACCT', '');
-        data.append('RESPONSE', challenge);
+        data.append('RESPONSE', challengeResponse);
         data.append('VERSION', VERSION.toString());
         data.append('SF', selectedSF);
         await this.session.post(this.path, data);
-        return await this._finish(challenge);
+        return await this._finish(challengeResponse);
     }
 
-    async _finish(challenge) {
+    async _finish(challengeResponse) {
         const data = new URLSearchParams();
         data.append('user_name', this.#username);
         data.append('password', 'xxxxxxxxxxxxxxxxxxxxxxxx');
-        data.append('chlginput', challenge);
+        data.append('chlginput', challengeResponse);
         data.append('loginType', '0');
         data.append('forwardTo', '22');
         data.append('M1', this.#M);
         data.append('M2', this.#M2);
         const response = await this.session.post(DISPATCHER_PATH, data);
         return response.data === 'Client login succeeds';
+    }
+
+    _generateChallengeResponse(pin, counter, challenge, algo, ocraKey) {
+        const hexChallenge = parseInt(challenge).toString(16);
+        const sha1Pin = Sha1.hash(pin);
+
+        return OCRA.generateOCRA(
+            algo,
+            ocraKey,
+            counter,
+            hexChallenge,
+            sha1Pin
+        );
     }
 
     _calculate_k() {

@@ -1,13 +1,10 @@
-const BigInteger = require('jsbn').BigInteger;
-const NodeRSA = require('node-rsa');
-
 const IBKeyAuthenticator = require('./IBKeyAuthenticator');
-
 
 const USERNAME = 'user';
 const PASSWORD = 'pass';
 const URL = ''; // https://localhost:5000
 const IMEI = "48f8ede2193efa5f";
+
 
 describe('IBKeyAuthenticator', () => {
     test('creates ocra key', () => {
