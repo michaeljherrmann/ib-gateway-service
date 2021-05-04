@@ -239,7 +239,7 @@ class IBKeyAuthenticator {
         data.append('KEY_TYPE', 'IKEY');
         const response = await this.session.post(AM_PATH, data);
         if (!response.data.hasOwnProperty('ACTIVATION_RESULT') || response.data.ACTIVATION_RESULT !== true) {
-            throw new Error(`COMPLETE SETUP returned: ${response.data}`);
+            throw new Error(`COMPLETE SETUP returned: ${JSON.stringify(response.data)}`);
         }
         return response.data.SERIAL_NO;
     }
@@ -340,7 +340,7 @@ class IBKeyAuthenticator {
             return await this._completeTwoFactorAuthentication(this.#secondFactorMethod);
         }
         else {
-            return await this._finish('');
+            return true;
         }
     }
 

@@ -1,7 +1,9 @@
 const bodyParser = require('body-parser');
 const express    = require('express');
+const fs         = require('fs');
 const https      = require('https');
 const kill       = require('tree-kill');
+const path       = require('path')
 const proxy      = require('http-proxy-middleware');
 const { spawn }  = require('child_process');
 const auth       = require('./auth');
@@ -14,6 +16,10 @@ const auth       = require('./auth');
 // consts from environment
 const LOG_LEVEL = process.env.IB_GATEWAY_LOG_LEVEL || 'info';
 const IB_GATEWAY_SERVICE_PORT = process.env.IB_GATEWAY_SERVICE_PORT || 5050;
+
+const DATA_STORE_PATH = process.env.IB_GATEWAY_DATA_STORE_PATH || '/tmp/ib_gateway_data/'
+const IB_AUTH_OCRA_SECRET = process.env.IB_AUTH_OCRA_SECRET;
+const IB_AUTH_OCRA_PIN = process.env.IB_AUTH_OCRA_PIN;
 
 const IB_GATEWAY_BIN = process.env.IB_GATEWAY_BIN;
 const IB_GATEWAY_CONF = process.env.IB_GATEWAY_CONF;
@@ -125,10 +131,34 @@ async function doAuth(username, password) {
     });
     authLock.catch(() => {});
 
+    // Use SMS second factor if IBKey isn't set up
+    let secondFactorMethod = auth.SMS;
+    let counter = '2';
+    if (IB_AUTH_OCRA_PIN && IB_AUTH_OCRA_SECRET) {
+        console.log('Using IBKey as second factor');
+        secondFactorMethod = auth.IBKEY_ANDROID;
+        const counterFile = path.join(DATA_STORE_PATH, 'counter.txt');
+        try {
+            counter = fs.readFileSync(counterFile, 'utf8');
+        }
+        catch (e) {
+            console.log(`creating counter file: ${counterFile}`);
+            fs.mkdirSync(DATA_STORE_PATH, {recursive: true});
+            fs.writeFileSync(counterFile, '');
+        }
+
+        // update the stored counter
+        fs.writeFileSync(counterFile, `${parseInt(counter) + 1}`);
+    }
+
     const success = await auth.doAuth({
         username,
         password,
         baseUrl: IB_GATEWAY,
+        secondFactorMethod,
+        ocraPin: IB_AUTH_OCRA_PIN,
+        ocraSecret: IB_AUTH_OCRA_SECRET,
+        ocraCounter: counter,
     })
     if (!success) {
         throw Error('Login failed for an unknown reason');

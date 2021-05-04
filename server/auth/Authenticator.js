@@ -325,7 +325,11 @@ class Authenticator {
         data.append('RESPONSE', challengeResponse);
         data.append('VERSION', VERSION.toString());
         data.append('SF', selectedSF);
-        await this.session.post(this.path, data);
+        const response = await this.session.post(this.path, data);
+        const xml = await parseStringPromise(response.data);
+        if (xml.ib_auth_res.auth_res[0] !== 'true') {
+            throw new Error(`Completing two factor (${selectedSF}) returned error: ${xml.ib_auth_res.error[0]}`);
+        }
         return await this._finish(challengeResponse);
     }
 
