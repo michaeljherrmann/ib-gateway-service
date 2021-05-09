@@ -20,6 +20,7 @@ const IB_GATEWAY_SERVICE_PORT = process.env.IB_GATEWAY_SERVICE_PORT || 5050;
 const DATA_STORE_PATH = process.env.IB_GATEWAY_DATA_STORE_PATH || '/tmp/ib_gateway_data/'
 const IB_AUTH_OCRA_SECRET = process.env.IB_AUTH_OCRA_SECRET;
 const IB_AUTH_OCRA_PIN = process.env.IB_AUTH_OCRA_PIN;
+const IB_AUTH_MAX_ATTEMPTS = process.env.IB_AUTH_MAX_ATTEMPTS || 2;
 
 const IB_GATEWAY_BIN = process.env.IB_GATEWAY_BIN;
 const IB_GATEWAY_CONF = process.env.IB_GATEWAY_CONF;
@@ -57,6 +58,9 @@ router.route('/service')
     // authenticates the ib gateway using the credentials passed in
     // body: { username: <USERNAME>, password: <PASSWORD> }
     .put((req, res) => {
+        if (!req.body.username || !req.body.password) {
+            res.status(400).json('username and password are required');
+        }
         doAuth(req.body.username, req.body.password).then((data) => {
             authLockResolve(data);
             authLock = null;
@@ -90,16 +94,16 @@ app.use((req, res, next) => {
 app.use('/api', router);
 
 // REGISTER PROXY ------------------------------------
-const proxyOptions = {
-    target: IB_GATEWAY,
-    ws: true, // proxy websockets
-    secure: false, // don't verify ssl certs
-    pathRewrite: {
-        '^/api/gateway': '', // remove base api path
-    },
-    logLevel: LOG_LEVEL,
-};
-app.use('/api/gateway', proxy(proxyOptions));
+// const proxyOptions = {
+//     target: IB_GATEWAY,
+//     ws: true, // proxy websockets
+//     secure: false, // don't verify ssl certs
+//     pathRewrite: {
+//         '^/api/gateway': '', // remove base api path
+//     },
+//     logLevel: LOG_LEVEL,
+// };
+// app.use('/api/gateway', proxy(proxyOptions));
 
 
 // START THE SERVICE
@@ -151,6 +155,25 @@ async function doAuth(username, password) {
         fs.writeFileSync(counterFile, `${parseInt(counter) + 1}`);
     }
 
+    // track login attempts to prevent accidentally locking out if too many failed attempts
+    const attemptFile = path.join(DATA_STORE_PATH, 'attempt.txt');
+    let attempts = '0';
+    try {
+        attempts = fs.readFileSync(attemptFile, 'utf8');
+    }
+    catch (e) {
+        console.log(`creating attempt file: ${attemptFile}`);
+        fs.mkdirSync(DATA_STORE_PATH, {recursive: true});
+        fs.writeFileSync(attemptFile, '0');
+    }
+
+    // update the stored attempts
+    fs.writeFileSync(attemptFile, `${parseInt(attempts) + 1}`);
+
+    if (parseInt(attempts) >= IB_AUTH_MAX_ATTEMPTS) {
+        throw new Error(`Too many failed login attempts (${attempts}), requires manual investigation and reset`);
+    }
+
     const success = await auth.doAuth({
         username,
         password,
@@ -161,8 +184,11 @@ async function doAuth(username, password) {
         ocraCounter: counter,
     })
     if (!success) {
-        throw Error('Login failed for an unknown reason');
+        throw new Error('Login failed for an unknown reason');
     }
+
+    // authentication worked so we can reset the attempt counter
+    fs.writeFileSync(attemptFile, '0');
 
     // Wait for gateway to be authenticated
     const isGatewayAuthenticated = () => {
