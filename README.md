@@ -8,11 +8,11 @@ Under the hood, this does not use any sort of android emulator nor browser, *eve
 # Getting started
 #### Fetch the docker image:
  ```
- docker pull mjherrma/ib-gateway-service:2.3.2
+ docker pull mjherrma/ib-gateway-service:2.4.0
 ```
 #### Start the service:
 ```
-docker run -p 5050:5050 -p 5000:5000 mjherrma/ib-gateway-service:2.3.2
+docker run -p 5050:5050 -p 5000:5000 mjherrma/ib-gateway-service:2.4.0
 ```
 #### Start Client Portal (CP) gateway:
 ```
@@ -55,7 +55,7 @@ IB Gateway Service is setup to use [twilio](https://www.twilio.com) for SMS two 
 ## IBKey Authentication
 In order to set up IBKey, you need to run the IBKey setup script:
 ```
-docker run -it mjherrma/ib-gateway-service:2.3.2 bash -c 'npm run setup-ibkey'
+docker run -it mjherrma/ib-gateway-service:2.4.0 bash -c 'npm run setup-ibkey'
 ```
 If successful, the script will output the IBKey secret. This needs to be passed into the environment
  variable: `IB_AUTH_OCRA_SECRET` and the pin created during setup also needs to be provided via
