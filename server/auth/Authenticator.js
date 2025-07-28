@@ -1,9 +1,8 @@
 const SecureRandom = require('jsbn').SecureRandom;
 const BigInteger = require('jsbn').BigInteger;
 const axios = require('axios').default;
-const axiosCookieJarSupport = require('axios-cookiejar-support').default;
+const { HttpsCookieAgent } = require('http-cookie-agent/http');
 const tough = require('tough-cookie');
-const https = require('https');
 const parseStringPromise = require('xml2js').parseStringPromise;
 
 const OCRA = require('./ocra');
@@ -100,19 +99,18 @@ class Authenticator {
 
         this.#username = username;
         this.#password = password;
+        this.jar = new tough.CookieJar();
+        const agent = new HttpsCookieAgent({
+            cookies: {jar: this.jar},
+            rejectUnauthorized: false,
+            keepAlive: true,
+        });
+
         this.session = axios.create({
             baseURL: baseUrl,
             withCredentials: true,
-            httpsAgent: new https.Agent({
-                rejectUnauthorized: false,
-                keepAlive: true,
-            }),
+            httpsAgent: agent,
         });
-
-        // Set up the cookie jar
-        axiosCookieJarSupport(this.session);
-        this.session.defaults.jar = new tough.CookieJar();
-        this.session.defaults.ignoreCookieErrors = true;
 
         // encryption set up
         this.#A = this._randomizeA();
@@ -136,7 +134,7 @@ class Authenticator {
             value: ssoId,
             expires: expDate,
         });
-        this.session.defaults.jar.setCookieSync(cookie, this.session.defaults.baseURL);
+        this.jar.setCookieSync(cookie, this.session.defaults.baseURL);
 
         // Initialize the shared key for rsa
         const data = new URLSearchParams();
@@ -515,7 +513,7 @@ class Authenticator {
             key: 'XYZAB_AM.LOGIN',
             value: sessionKey,
         });
-        this.session.defaults.jar.setCookieSync(cookie, this.session.defaults.baseURL);
+        this.jar.setCookieSync(cookie, this.session.defaults.baseURL);
     }
 
     /**

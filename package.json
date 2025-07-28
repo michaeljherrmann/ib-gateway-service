@@ -18,17 +18,17 @@
   },
   "homepage": "https://github.com/michaeljherrmann/ib-gateway-service#readme",
   "dependencies": {
-    "axios": "^0.21.1",
-    "axios-cookiejar-support": "^1.0.1",
+    "axios": "^1.11.0",
     "express": "^4.17.1",
-    "http-proxy-middleware": "^0.20.0",
+    "http-cookie-agent": "^7.0.2",
+    "http-proxy-middleware": "^3.0.5",
     "jsbn": "^1.1.0",
     "jssha": "2.2.0",
     "prompt": "^1.1.0",
     "tough-cookie": "^4.0.0",
     "tree-kill": "^1.2.2",
     "twilio": "^3.55.1",
-    "xml2js": "^0.4.23"
+    "xml2js": "^0.6.2"
   },
   "devDependencies": {
     "jest": "^30.0.5"
