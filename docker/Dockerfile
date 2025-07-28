@@ -3,26 +3,11 @@ FROM openjdk:14-slim
 RUN apt-get update && apt-get install -y \
     curl \
     dumb-init \
-    procps \
-    unzip \
-    wget
-
-# Maybe need these for chromium
-# apt-get install libpangocairo-1.0-0 libx11-xcb1 libxcomposite1 libxcursor1 libxdamage1 libxi6 libxtst6 libnss3 libcups2 libxss1 libxrandr2  libasound2 libatk1.0-0 libgtk-3-0
+    unzip
 
 # Install nodejs
 RUN curl -sL https://deb.nodesource.com/setup_12.x | bash -
 RUN apt-get install -y nodejs
-
-# Install Chrome (will install deps for Chromium)
-RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
-    && sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list' \
-    && apt-get update \
-    && apt-get install -y google-chrome-unstable --no-install-recommends \
-    && rm -rf /var/lib/apt/lists/*
-
-# Uncomment to disable the download of Chromium
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD true
 
 WORKDIR /opt/app
 ENV IB_GATEWAY_BIN="/opt/app/bin/run.sh"
@@ -43,10 +28,8 @@ COPY ./package.json ./package.json
 RUN npm ci
 
 # Copy server code
-COPY ./server.js ./server.js
-
-# Use dumb-init to prevent zombie processes from puppeteer
-ENTRYPOINT ["/usr/bin/dumb-init", "--"]
+COPY ./server ./server
 
 # Run service
-CMD ["node", "server.js"]
+ENTRYPOINT ["/usr/bin/dumb-init", "--"]
+CMD ["node", "server"]
