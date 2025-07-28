@@ -2,3 +2,15 @@
 *.pyc
 *.pyo
 node_modules/
+server/auth/original/
+server/auth/test-live.js
+
+# Yarn Berry
+.env.yarn
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
