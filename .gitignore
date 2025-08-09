@@ -1,4 +1,21 @@
 .idea/
 *.pyc
 *.pyo
+<<<<<<< Updated upstream
 node_modules/
+=======
+node_modules/
+server/auth/original/
+server/auth/test-live.js
+container
+
+# Yarn Berry
+.env.yarn
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+>>>>>>> Stashed changes

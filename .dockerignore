@@ -2,4 +2,8 @@
 **/node_modules
 .idea
 .DS_Store
+<<<<<<< Updated upstream
 .*
+=======
+container
+>>>>>>> Stashed changes

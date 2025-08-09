@@ -37,6 +37,12 @@ app.use(bodyParser.json());
 const router = express.Router();
 
 router.route('/service')
+    // GET
+    // healthcheck endpoint
+    .get((req, res) => {
+        res.status(200).json({ status: 'OK', timestamp: new Date().toISOString() });
+    })
+
     // POST
     // starts the IB gateway
     .post((req, res) => {

@@ -1,0 +1,105 @@
+name: Build and Push Docker Image
+
+on:
+  push:
+    branches:
+      - master
+
+env:
+  REGISTRY: docker.io
+  IMAGE_NAME: mjherrma/ib-gateway-service
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+
+    - name: Generate version tag
+      id: version
+      run: |
+        # Get the latest tag that matches semantic versioning pattern
+        LATEST_TAG=$(git tag -l --sort=-version:refname | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+$' | head -n1)
+        
+        if [ -z "$LATEST_TAG" ]; then
+          # No existing tags, start with v3.0.0
+          NEW_TAG="v3.0.0"
+        else
+          # Extract version numbers (remove 'v' prefix if present)
+          VERSION=${LATEST_TAG#v}
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+          
+          # Increment patch version
+          PATCH=$((PATCH + 1))
+          NEW_TAG="v${MAJOR}.${MINOR}.${PATCH}"
+        fi
+        
+        echo "new_tag=$NEW_TAG" >> $GITHUB_OUTPUT
+        echo "version=${NEW_TAG#v}" >> $GITHUB_OUTPUT
+        echo "Generated new tag: $NEW_TAG"
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.IMAGE_NAME }}
+        tags: |
+          type=raw,value=${{ steps.version.outputs.version }}
+          type=raw,value=latest
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./docker/Dockerfile
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        platforms: linux/amd64,linux/arm64
+
+    - name: Update README version
+      run: |
+        # Update version references in README.md
+        sed -i "s/mjherrma\/ib-gateway-service:[0-9]\+\.[0-9]\+\.[0-9]\+/mjherrma\/ib-gateway-service:${{ steps.version.outputs.version }}/g" README.md
+        
+        # Check if there were any changes
+        if git diff --quiet README.md; then
+          echo "No version updates needed in README.md"
+        else
+          echo "Updated version references in README.md"
+          git add README.md
+        fi
+
+    - name: Create and push git tag
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        
+        # Commit README changes if any
+        if git diff --staged --quiet; then
+          echo "No README changes to commit"
+        else
+          git commit -m "Update README version to ${{ steps.version.outputs.version }}"
+          git push origin master
+        fi
+        
+        # Create and push the tag
+        git tag ${{ steps.version.outputs.new_tag }}
+        git push origin ${{ steps.version.outputs.new_tag }}
