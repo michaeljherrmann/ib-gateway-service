@@ -1,9 +1,6 @@
 .idea/
 *.pyc
 *.pyo
-<<<<<<< Updated upstream
-node_modules/
-=======
 node_modules/
 server/auth/original/
 server/auth/test-live.js
@@ -18,4 +15,3 @@ container
 !.yarn/releases
 !.yarn/sdks
 !.yarn/versions
->>>>>>> Stashed changes

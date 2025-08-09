@@ -1,11 +1,12 @@
 const bodyParser = require('body-parser');
 const express    = require('express');
+const fs         = require('fs');
 const https      = require('https');
 const kill       = require('tree-kill');
+const path       = require('path')
 const proxy      = require('http-proxy-middleware');
-const puppeteer  = require('puppeteer');
 const { spawn }  = require('child_process');
-const twilio      = require('twilio');
+const auth       = require('./auth');
 
 // TODO: for now the proxy forwarding doesn't seem to work that well
 //  the ib gateway rejects/doesn't respond to some of those requests
@@ -16,15 +17,17 @@ const twilio      = require('twilio');
 const LOG_LEVEL = process.env.IB_GATEWAY_LOG_LEVEL || 'info';
 const IB_GATEWAY_SERVICE_PORT = process.env.IB_GATEWAY_SERVICE_PORT || 5050;
 
+const DATA_STORE_PATH = process.env.IB_GATEWAY_DATA_STORE_PATH || '/tmp/ib_gateway_data/'
+const IB_AUTH_OCRA_SECRET = process.env.IB_AUTH_OCRA_SECRET;
+const IB_AUTH_OCRA_PIN = process.env.IB_AUTH_OCRA_PIN;
+const IB_AUTH_MAX_ATTEMPTS = process.env.IB_AUTH_MAX_ATTEMPTS || 2;
+
 const IB_GATEWAY_BIN = process.env.IB_GATEWAY_BIN;
 const IB_GATEWAY_CONF = process.env.IB_GATEWAY_CONF;
 const IB_GATEWAY_DOMAIN = process.env.IB_GATEWAY_DOMAIN || 'localhost';
 const IB_GATEWAY_PORT = process.env.IB_GATEWAY_PORT || 5000;
 const IB_GATEWAY_SCHEME = process.env.IB_GATEWAY_SCHEME || 'https://';
 const IB_GATEWAY = IB_GATEWAY_SCHEME + IB_GATEWAY_DOMAIN + ':' + IB_GATEWAY_PORT;
-
-const TWILIO_ACCOUNT_SID = process.env.IB_AUTH_TWILIO_ACCOUNT_SID;
-const TWILIO_AUTH_TOKEN = process.env.IB_AUTH_TWILIO_AUTH_TOKEN;
 
 // configure app to use bodyParser
 const app = express();
@@ -61,6 +64,9 @@ router.route('/service')
     // authenticates the ib gateway using the credentials passed in
     // body: { username: <USERNAME>, password: <PASSWORD> }
     .put((req, res) => {
+        if (!req.body.username || !req.body.password) {
+            res.status(400).json('username and password are required');
+        }
         doAuth(req.body.username, req.body.password).then((data) => {
             authLockResolve(data);
             authLock = null;
@@ -116,50 +122,7 @@ console.log('Magic happens on PORT:' + IB_GATEWAY_SERVICE_PORT);
 let authLock;
 let authLockResolve;
 let authLockReject;
-let browser;
 
-async function handleTwoFactor(page, startDate) {
-    const codeInputSelector = '#chlginput';
-    await page.waitForSelector(codeInputSelector);
-
-    console.log('Two factor authentication is required');
-    const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
-
-    async function getCode() {
-        const messages = await client.messages.list({
-            dateSentAfter: startDate,
-            limit: 1,
-        });
-        if (messages.length !== 1) {
-            throw new Error(`Twilio returned ${messages.length} messages`);
-        }
-        const message = messages[0];
-        console.log('Retrieved message from twilio');
-        const match = message.body.match(/\d{6}/);
-        if (match === null) {
-            throw new Error(`Could not extract code from message body: "${message.body}"`)
-        }
-        return match[0];
-    }
-
-    let err;
-    for (let i = 0; i <= 5; i++) {
-        console.log(`Checking for auth SMS in ${i}s`)
-        await new Promise(resolve => setTimeout(resolve, i * 1000));
-        try {
-            const code = await getCode();
-            await page.type(codeInputSelector, code);
-            await page.click('#submitForm');
-            return page.waitForNavigation();
-        }
-        catch (e) {
-            err = e;
-        }
-    }
-
-    // could not complete two factor after retries
-    throw new Error(`Two factor authentication could not complete in time due to ${err}`);
-}
 
 async function doAuth(username, password) {
     if (!gateway) {
@@ -178,42 +141,60 @@ async function doAuth(username, password) {
     });
     authLock.catch(() => {});
 
-    browser = await puppeteer.launch({
-        executablePath: 'google-chrome-unstable', // uncomment to use chrome
-        headless: true,
-        args: ['--no-sandbox'],
-        ignoreHTTPSErrors: true, // ssl cert not valid for ib gateway
-    });
+    // Use SMS second factor if IBKey isn't set up
+    let secondFactorMethod = auth.SMS;
+    let counter = '2';
+    if (IB_AUTH_OCRA_PIN && IB_AUTH_OCRA_SECRET) {
+        console.log('Using IBKey as second factor');
+        secondFactorMethod = auth.IBKEY_ANDROID;
+        const counterFile = path.join(DATA_STORE_PATH, 'counter.txt');
+        try {
+            counter = fs.readFileSync(counterFile, 'utf8');
+        }
+        catch (e) {
+            console.log(`creating counter file: ${counterFile}`);
+            fs.mkdirSync(DATA_STORE_PATH, {recursive: true});
+            fs.writeFileSync(counterFile, '');
+        }
 
-    let successMessage = '';
+        // update the stored counter
+        fs.writeFileSync(counterFile, `${parseInt(counter) + 1}`);
+    }
+
+    // track login attempts to prevent accidentally locking out if too many failed attempts
+    const attemptFile = path.join(DATA_STORE_PATH, 'attempt.txt');
+    let attempts = '0';
     try {
-        // Open login page
-        const startDate = new Date();
-        const page = await browser.newPage();
-        await page.goto(IB_GATEWAY);
-
-        // Submit credentials
-        await page.type('#user_name', username);
-        await page.type('#password', password);
-        await page.click('#submitForm');
-
-        // Wait for redirect to happen or for two factor to complete
-        await Promise.race([
-            page.waitForNavigation(),
-            handleTwoFactor(page, startDate),
-        ]);
-
-        // Verify
-        successMessage = await page.evaluate(() => document.body.innerText);
+        attempts = fs.readFileSync(attemptFile, 'utf8');
     }
-    finally {
-        await browser.close();
-        browser = null;
+    catch (e) {
+        console.log(`creating attempt file: ${attemptFile}`);
+        fs.mkdirSync(DATA_STORE_PATH, {recursive: true});
+        fs.writeFileSync(attemptFile, '0');
     }
 
-    if (successMessage !== 'Client login succeeds') {
-        throw Error('Login could not be verified! msg: ' + successMessage);
+    // update the stored attempts
+    fs.writeFileSync(attemptFile, `${parseInt(attempts) + 1}`);
+
+    if (parseInt(attempts) >= IB_AUTH_MAX_ATTEMPTS) {
+        throw new Error(`Too many failed login attempts (${attempts}), requires manual investigation and reset`);
     }
+
+    const success = await auth.doAuth({
+        username,
+        password,
+        baseUrl: IB_GATEWAY,
+        secondFactorMethod,
+        ocraPin: IB_AUTH_OCRA_PIN,
+        ocraSecret: IB_AUTH_OCRA_SECRET,
+        ocraCounter: counter,
+    })
+    if (!success) {
+        throw new Error('Login failed for an unknown reason');
+    }
+
+    // authentication worked so we can reset the attempt counter
+    fs.writeFileSync(attemptFile, '0');
 
     // Wait for gateway to be authenticated
     const isGatewayAuthenticated = () => {
@@ -261,7 +242,7 @@ async function doAuth(username, password) {
     }
 
     let err;
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 8; i++) {
         console.log(`Gateway is not authenticated yet, checking again in ${i}s`)
         await new Promise(resolve => setTimeout(resolve, i * 1000));
 
@@ -368,11 +349,6 @@ async function startIBGateway() {
 
 
 async function stopIBGateway() {
-    if (browser) {
-        // kill the browser too if it's still open
-        browser.close();
-        browser = null;
-    }
     if (!gateway) {
         // no gateway or it was already killed
         return;
