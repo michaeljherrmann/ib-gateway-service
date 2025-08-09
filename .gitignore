@@ -4,6 +4,7 @@
 node_modules/
 server/auth/original/
 server/auth/test-live.js
+container
 
 # Yarn Berry
 .env.yarn
