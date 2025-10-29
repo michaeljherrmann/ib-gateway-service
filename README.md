@@ -8,11 +8,11 @@ Under the hood, this does not use any sort of android emulator nor browser, *eve
 # Getting started
 #### Fetch the docker image:
  ```
- docker pull mjherrma/ib-gateway-service:3.0.0
+ docker pull mjherrma/ib-gateway-service:3.0.1
 ```
 #### Start the service:
 ```
-docker run -p 5050:5050 -p 5000:5000 mjherrma/ib-gateway-service:3.0.0
+docker run -p 5050:5050 -p 5000:5000 mjherrma/ib-gateway-service:3.0.1
 ```
 #### Start Client Portal (CP) gateway:
 ```
@@ -79,7 +79,7 @@ will automatically be able to login with two factor.
 
 In order to set up IBKey, you need to run the IBKey setup script:
 ```
-docker run -it mjherrma/ib-gateway-service:3.0.0 bash -c 'npm run setup-ibkey'
+docker run -it mjherrma/ib-gateway-service:3.0.1 bash -c 'npm run setup-ibkey'
 ```
 If successful, the script will output the IBKey auth data. This must be saved as a json file
 named `data.json` and placed in `IB_GATEWAY_DATA_STORE_PATH` 
