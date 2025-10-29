@@ -4,23 +4,24 @@ const fs         = require('fs');
 const https      = require('https');
 const kill       = require('tree-kill');
 const path       = require('path')
-const proxy      = require('http-proxy-middleware');
 const { spawn }  = require('child_process');
-const auth       = require('./auth');
-
-// TODO: for now the proxy forwarding doesn't seem to work that well
-//  the ib gateway rejects/doesn't respond to some of those requests
-//  have to debug further, but maybe it has to do with header info?
-//  for now just communicating directly to the ib gateway
+const Sms = require("./auth/sms");
+const auth       = require('./auth').Authenticator;
+const ibkey      = require('./auth').IBKeyAuthenticator;
+const TwoFactorError = require('./auth').TwoFactorError;
 
 // consts from environment
-const LOG_LEVEL = process.env.IB_GATEWAY_LOG_LEVEL || 'info';
 const IB_GATEWAY_SERVICE_PORT = process.env.IB_GATEWAY_SERVICE_PORT || 5050;
 
 const DATA_STORE_PATH = process.env.IB_GATEWAY_DATA_STORE_PATH || '/tmp/ib_gateway_data/'
-const IB_AUTH_OCRA_SECRET = process.env.IB_AUTH_OCRA_SECRET;
-const IB_AUTH_OCRA_PIN = process.env.IB_AUTH_OCRA_PIN;
-const IB_AUTH_MAX_ATTEMPTS = process.env.IB_AUTH_MAX_ATTEMPTS || 2;
+const IB_AUTH_MAX_ATTEMPTS = process.env.IB_AUTH_MAX_ATTEMPTS || 4;
+const IB_AUTH_USE_IBKEY = !!process.env.IB_AUTH_USE_IBKEY || false;
+const IB_AUTH_MAX_COUNTER = process.env.IB_AUTH_MAX_COUNTER || 95;
+
+// Validate IB_AUTH_MAX_COUNTER, for some reason it stops working after 100
+if (IB_AUTH_MAX_COUNTER > 100) {
+    throw new Error(`IB_AUTH_MAX_COUNTER must be less than or equal to 100 (current value: ${IB_AUTH_MAX_COUNTER})`);
+}
 
 const IB_GATEWAY_BIN = process.env.IB_GATEWAY_BIN;
 const IB_GATEWAY_CONF = process.env.IB_GATEWAY_CONF;
@@ -70,6 +71,7 @@ router.route('/service')
         doAuth(req.body.username, req.body.password).then((data) => {
             authLockResolve(data);
             authLock = null;
+            lockedUntil = null;
             res.status(200).json(data);
         }).catch((err) => {
             authLockReject && authLockReject(err);
@@ -99,34 +101,36 @@ app.use((req, res, next) => {
 // REGISTER OUR ROUTES -------------------------------
 app.use('/api', router);
 
-// REGISTER PROXY ------------------------------------
-// const proxyOptions = {
-//     target: IB_GATEWAY,
-//     ws: true, // proxy websockets
-//     secure: false, // don't verify ssl certs
-//     pathRewrite: {
-//         '^/api/gateway': '', // remove base api path
-//     },
-//     logLevel: LOG_LEVEL,
-// };
-// app.use('/api/gateway', proxy(proxyOptions));
-
-
 // START THE SERVICE
 // =============================================================================
 app.listen(IB_GATEWAY_SERVICE_PORT);
 console.log('Magic happens on PORT:' + IB_GATEWAY_SERVICE_PORT);
 
-// PUPPETEER-CHROME INTERACTION
+// IB AUTH
 // =============================================================================
 let authLock;
 let authLockResolve;
 let authLockReject;
+let lockedUntil;
 
+function generatePin() {
+    return (Math.floor(Math.random() * (999999 - 1000) ) + 1000).toString();
+}
 
 async function doAuth(username, password) {
     if (!gateway) {
         throw new Error('IB gateway needs to be first started before trying to login');
+    }
+
+    if (lockedUntil) {
+        const now = Date.now();
+        if (now >= lockedUntil) {
+            lockedUntil = null;
+        }
+        else {
+            const unlocks = Math.ceil((lockedUntil - now) / 1000);
+            throw new Error(`Auth is in backoff, try again in ${unlocks}s`)
+        }
     }
 
     if (authLock) {
@@ -141,60 +145,88 @@ async function doAuth(username, password) {
     });
     authLock.catch(() => {});
 
-    // Use SMS second factor if IBKey isn't set up
-    let secondFactorMethod = auth.SMS;
-    let counter = '2';
-    if (IB_AUTH_OCRA_PIN && IB_AUTH_OCRA_SECRET) {
-        console.log('Using IBKey as second factor');
-        secondFactorMethod = auth.IBKEY_ANDROID;
-        const counterFile = path.join(DATA_STORE_PATH, 'counter.txt');
-        try {
-            counter = fs.readFileSync(counterFile, 'utf8');
-        }
-        catch (e) {
-            console.log(`creating counter file: ${counterFile}`);
-            fs.mkdirSync(DATA_STORE_PATH, {recursive: true});
-            fs.writeFileSync(counterFile, '');
-        }
-
-        // update the stored counter
-        fs.writeFileSync(counterFile, `${parseInt(counter) + 1}`);
-    }
-
-    // track login attempts to prevent accidentally locking out if too many failed attempts
-    const attemptFile = path.join(DATA_STORE_PATH, 'attempt.txt');
-    let attempts = '0';
+    // data file to store auth data
+    const dataFile = path.join(DATA_STORE_PATH, 'data.json');
+    let authDataStr;
     try {
-        attempts = fs.readFileSync(attemptFile, 'utf8');
+        authDataStr = fs.readFileSync(dataFile, 'utf8');
     }
     catch (e) {
-        console.log(`creating attempt file: ${attemptFile}`);
+        console.log(`creating auth data file: ${dataFile}`);
+        authDataStr = JSON.stringify({
+            pin: generatePin(),
+            ocra: null,
+            counter: 2,
+            attempts: 0,
+        });
         fs.mkdirSync(DATA_STORE_PATH, {recursive: true});
-        fs.writeFileSync(attemptFile, '0');
+        fs.writeFileSync(dataFile, authDataStr);
+    }
+    const authData = JSON.parse(authDataStr);
+
+    // track login attempts to prevent accidentally locking out if too many failed attempts
+    authData.attempts += 1;
+
+
+    // if login fails, how soon to allow another try
+    const now = Date.now();
+    switch (authData.attempts) {
+        case 1: lockedUntil = now + 60 * 1000; break; // 1 min
+        case 2: lockedUntil = now + 60 * 60 * 1000; break; // 1 hour
+        default: lockedUntil = now + 6 * 60 * 60 * 1000; // 6 hours
     }
 
-    // update the stored attempts
-    fs.writeFileSync(attemptFile, `${parseInt(attempts) + 1}`);
+    try {
+        if (parseInt(authData.attempts) > IB_AUTH_MAX_ATTEMPTS) {
+            throw new Error(`Too many failed login attempts (${authData.attempts}), requires manual investigation and reset`);
+        }
 
-    if (parseInt(attempts) >= IB_AUTH_MAX_ATTEMPTS) {
-        throw new Error(`Too many failed login attempts (${attempts}), requires manual investigation and reset`);
+        let secondFactorMethod = auth.SMS;
+        if (IB_AUTH_USE_IBKEY) {
+            console.log('Using IBKey as second factor');
+            secondFactorMethod = auth.IBKEY_ANDROID;
+
+            if (!authData.ocra || authData.counter >= IB_AUTH_MAX_COUNTER) {
+                if (!Sms.hasCredentials()) {
+                    throw new Error('SMS credentials are not set, cannot automatically setup IBKey');
+                }
+                console.log(`setting up IB Key, counter is at ${authData.counter}`);
+                authData.ocra = await ibkey.setupIBKey({
+                    username,
+                    password,
+                    baseUrl: 'https://ndcdyn.interactivebrokers.com',
+                    pin: authData.pin,
+                });
+                authData.counter = 2;
+            }
+        }
+
+        const success = await auth.doAuth({
+            username,
+            password,
+            baseUrl: IB_GATEWAY,
+            secondFactorMethod,
+            ocraPin: authData.pin,
+            ocraSecret: authData.ocra,
+            ocraCounter: authData.counter,
+        });
+        authData.counter += 1;
+        if (!success) {
+            throw new Error('Login failed for an unknown reason');
+        }
+        authData.attempts = 0;
     }
-
-    const success = await auth.doAuth({
-        username,
-        password,
-        baseUrl: IB_GATEWAY,
-        secondFactorMethod,
-        ocraPin: IB_AUTH_OCRA_PIN,
-        ocraSecret: IB_AUTH_OCRA_SECRET,
-        ocraCounter: counter,
-    })
-    if (!success) {
-        throw new Error('Login failed for an unknown reason');
+    catch (e) {
+        if (e instanceof TwoFactorError) {
+            // If it's a two factor error, good chance the counter is out of date
+            authData.counter += 1;
+        }
+        throw e;
     }
-
-    // authentication worked so we can reset the attempt counter
-    fs.writeFileSync(attemptFile, '0');
+    finally {
+        // save auth data
+        fs.writeFileSync(dataFile, JSON.stringify(authData));
+    }
 
     // Wait for gateway to be authenticated
     const isGatewayAuthenticated = () => {

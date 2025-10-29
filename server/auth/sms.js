@@ -2,6 +2,10 @@ const twilio = require('twilio');
 
 
 class Sms {
+    static hasCredentials() {
+        return !!process.env.IB_AUTH_TWILIO_ACCOUNT_SID && !!process.env.IB_AUTH_TWILIO_AUTH_TOKEN;
+    }
+
     static async getChallenge(authStartedAt) {
         const TWILIO_ACCOUNT_SID = process.env.IB_AUTH_TWILIO_ACCOUNT_SID;
         const TWILIO_AUTH_TOKEN = process.env.IB_AUTH_TWILIO_AUTH_TOKEN;
