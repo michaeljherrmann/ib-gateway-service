@@ -1,14 +1,16 @@
 const SecureRandom = require('jsbn').SecureRandom;
 const BigInteger = require('jsbn').BigInteger;
 const axios = require('axios').default;
-const { HttpsCookieAgent } = require('http-cookie-agent/http');
+const axiosCookieJarSupport = require('axios-cookiejar-support').default;
 const tough = require('tough-cookie');
+const https = require('https');
 const parseStringPromise = require('xml2js').parseStringPromise;
 
 const OCRA = require('./ocra');
 const RSAKey = require('./rsa');
 const Sha1 = require('./sha1');
 const Sms = require('./sms');
+const { TwoFactorError } = require('./errors');
 
 
 const ONE = new BigInteger("1", 16);
@@ -99,18 +101,19 @@ class Authenticator {
 
         this.#username = username;
         this.#password = password;
-        this.jar = new tough.CookieJar();
-        const agent = new HttpsCookieAgent({
-            cookies: {jar: this.jar},
-            rejectUnauthorized: false,
-            keepAlive: true,
-        });
-
         this.session = axios.create({
             baseURL: baseUrl,
             withCredentials: true,
-            httpsAgent: agent,
+            httpsAgent: new https.Agent({
+                rejectUnauthorized: false,
+                keepAlive: true,
+            }),
         });
+
+        // Set up the cookie jar
+        axiosCookieJarSupport(this.session);
+        this.session.defaults.jar = new tough.CookieJar();
+        this.session.defaults.ignoreCookieErrors = true;
 
         // encryption set up
         this.#A = this._randomizeA();
@@ -134,7 +137,7 @@ class Authenticator {
             value: ssoId,
             expires: expDate,
         });
-        this.jar.setCookieSync(cookie, this.session.defaults.baseURL);
+        this.session.defaults.jar.setCookieSync(cookie, this.session.defaults.baseURL);
 
         // Initialize the shared key for rsa
         const data = new URLSearchParams();
@@ -326,7 +329,7 @@ class Authenticator {
         const response = await this.session.post(this.path, data);
         const xml = await parseStringPromise(response.data);
         if (xml.ib_auth_res.auth_res[0] !== 'true') {
-            throw new Error(`Completing two factor (${selectedSF}) returned error: ${xml.ib_auth_res.error[0]}`);
+            throw new TwoFactorError(`Completing two factor (${selectedSF}) returned error: ${xml.ib_auth_res.error[0]}`);
         }
         return await this._finish(challengeResponse);
     }
@@ -351,7 +354,7 @@ class Authenticator {
         return OCRA.generateOCRA(
             algo,
             ocraKey,
-            counter,
+            counter.toString(),
             hexChallenge,
             sha1Pin
         );
@@ -513,7 +516,7 @@ class Authenticator {
             key: 'XYZAB_AM.LOGIN',
             value: sessionKey,
         });
-        this.jar.setCookieSync(cookie, this.session.defaults.baseURL);
+        this.session.defaults.jar.setCookieSync(cookie, this.session.defaults.baseURL);
     }
 
     /**

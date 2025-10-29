@@ -1,5 +1,7 @@
 const IBKeyAuthenticator = require('./IBKeyAuthenticator');
 const prompt = require('prompt');
+const fs = require('fs');
+const path = require('path');
 
 async function doSetup() {
     console.log('\n=================================');
@@ -39,16 +41,42 @@ async function doSetup() {
     };
 
     const {username, password} = await prompt.get(schema);
+
+    schema = {
+        properties: {
+            pin: {
+                description: 'Enter a PIN for IB Key authentication',
+                required: true,
+                pattern: /^\d+$/,
+                message: 'PIN must contain only numbers'
+            }
+        }
+    };
+    const {pin} = await prompt.get(schema);
+
     const ocraKey = await IBKeyAuthenticator.setupIBKey({
         username,
         password,
         baseUrl: 'https://ndcdyn.interactivebrokers.com',
+        pin
     });
 
-    console.log('***************************');
-    console.log(`Here is your IB Key secret: ${ocraKey}`);
-    console.log('***************************');
-    console.log('You will need the pin you entered earlier and the OCRA counter starts at "2"');
+    const authData = {
+        pin: pin,
+        ocra: ocraKey,
+        counter: 2,
+        attempts: 0,
+    };
+
+    const fileName = `ib-key-auth-${username}-${Date.now()}.json`;
+    const filePath = path.join(process.cwd(), fileName);
+    fs.writeFileSync(filePath, JSON.stringify(authData, null, 2));
+
+    console.log('\n***************************');
+    console.log('IB Key setup successful!');
+    console.log('***************************\n');
+    console.log(JSON.stringify(authData, null, 2));
+    console.log(`\nAuth data saved to: ${filePath}\n`);
 }
 
 console.clear();

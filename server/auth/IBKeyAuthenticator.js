@@ -1,14 +1,16 @@
 const SecureRandom = require('jsbn').SecureRandom;
 const BigInteger = require('jsbn').BigInteger;
 const axios = require('axios').default;
-const { HttpsCookieAgent } = require('http-cookie-agent/http');
+const axiosCookieJarSupport = require('axios-cookiejar-support').default;
 const tough = require('tough-cookie');
+const https = require('https');
 const parseStringPromise = require('xml2js').parseStringPromise;
 const prompt = require('prompt');
 
 const RSAKey = require('./rsa');
 const OCRA = require('./ocra');
 const Sha1 = require('./sha1');
+const Sms  = require('./sms');
 
 
 const ONE = new BigInteger("1", 16);
@@ -41,6 +43,8 @@ class IBKeyAuthenticator {
     #rng = new SecureRandom();
     #suppLongPwd = false;
     #isPaper = null;
+    #startDate = null;
+    #pin = null;
 
     // Diffie–Hellman
     #N = new BigInteger("d4c7f8a2b32c11b8fba9581ec4ba4f1b04215642ef7355e37c0fc0443ef756ea2c6b8eeb755a1c723027663caa265ef785b8ff6a9b35227a52d86633dbdfca43", 16);
@@ -74,30 +78,34 @@ class IBKeyAuthenticator {
     #serverM2=null;
     #sessionKey = null;
 
-    static async setupIBKey({username, password, baseUrl}) {
-        const a = new IBKeyAuthenticator(username, password, baseUrl, SMS);
+    static async setupIBKey({username, password, baseUrl, pin}) {
+        const a = new IBKeyAuthenticator(username, password, baseUrl,pin, SMS);
         await a.initialize();
         await a.completeAuthentication();
         await a.isUserEnabled();
         return await a.generateOcra();
     }
 
-    constructor(username, password, baseUrl, secondFactorMethod = SMS) {
+    constructor(username, password, baseUrl, pin, secondFactorMethod = SMS) {
         this.#secondFactorMethod = secondFactorMethod;
         this.#username = username;
         this.#password = password;
-        this.jar = new tough.CookieJar();
-        const agent = new HttpsCookieAgent({
-            cookies: {jar: this.jar},
-            rejectUnauthorized: false,
-            keepAlive: true,
-        });
-
+        if (pin) {
+            this.#pin = pin.toString();
+        }
         this.session = axios.create({
             baseURL: baseUrl,
             withCredentials: true,
-            httpsAgent: agent,
+            httpsAgent: new https.Agent({
+                rejectUnauthorized: false,
+                keepAlive: true,
+            }),
         });
+
+        // Set up the cookie jar
+        axiosCookieJarSupport(this.session);
+        this.session.defaults.jar = new tough.CookieJar();
+        this.session.defaults.ignoreCookieErrors = true;
 
         // encryption set up
         this.#A = this._randomizeA();
@@ -107,6 +115,7 @@ class IBKeyAuthenticator {
         if (!secondTry) {
             console.log('IBKey Authenticator initializing');
         }
+        this.#startDate = new Date();
 
         // POST to set initial cookies
         let data = new URLSearchParams();
@@ -202,16 +211,10 @@ class IBKeyAuthenticator {
 
     async completeOcraSetup(ocraKey, ocraParams) {
         // get pin
-        prompt.start();
-        const schema = {
-            properties: {
-                pin: {
-                    description: 'Please create a pin for IBKey',
-                    required: true
-                }
-            }
-        };
-        const {pin} = await prompt.get(schema);
+        if (!pin) {
+            throw new Error('pin is required to complete ocra setup');
+        }
+        const pin = this.#pin;
 
         const counter = '1';
         const challengeResponse = this._generateChallengeResponse(
@@ -249,7 +252,7 @@ class IBKeyAuthenticator {
         return OCRA.generateOCRA(
             algo,
             ocraKey,
-            counter,
+            counter.toString(),
             hexChallenge,
             sha1Pin
         );
@@ -367,17 +370,22 @@ class IBKeyAuthenticator {
     async _authenticateTwoFactor(twoFactorType, selectedSF) {
         let challenge = '';
         if (selectedSF === SMS) {
-            prompt.start();
-            const schema = {
-                properties: {
-                    challenge: {
-                        description: 'Please enter SMS verification code from IB',
-                        required: true
+            if (Sms.hasCredentials()) {
+                challenge = await Sms.getChallenge(this.#startDate);
+            }
+            else {
+                prompt.start();
+                const schema = {
+                    properties: {
+                        challenge: {
+                            description: 'Please enter SMS verification code from IB',
+                            required: true
+                        }
                     }
-                }
-            };
-            const result = await prompt.get(schema);
-            challenge = result.challenge;
+                };
+                const result = await prompt.get(schema);
+                challenge = result.challenge;
+            }
         }
 
         if (twoFactorType === 'IBTK') {
@@ -554,7 +562,7 @@ class IBKeyAuthenticator {
             key: 'XYZAB.LOGIN',
             value: sessionKey,
         });
-         this.jar.setCookieSync(cookie, this.session.defaults.baseURL);
+        this.session.defaults.jar.setCookieSync(cookie, this.session.defaults.baseURL);
     }
 
     /**

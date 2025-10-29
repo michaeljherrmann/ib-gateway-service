@@ -21,7 +21,6 @@
     "axios": "^1.11.0",
     "express": "^4.17.1",
     "http-cookie-agent": "^7.0.2",
-    "http-proxy-middleware": "^3.0.5",
     "jsbn": "^1.1.0",
     "jssha": "2.2.0",
     "prompt": "^1.1.0",
