@@ -113,7 +113,7 @@ will automatically be able to login with two factor.
 
 In order to set up IBKey, you need to run the IBKey setup script:
 ```bash
-docker run -it mjherrma/ib-gateway-service:3.0.4 bash -c 'npm run setup-ibkey'
+docker run -it --entrypoint npm mjherrma/ib-gateway-service:3.0.4 run setup-ibkey
 ```
 If successful, the script will output the IBKey auth data. This must be saved as a json file
 named `data.json` and placed in `IB_GATEWAY_DATA_STORE_PATH`

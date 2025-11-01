@@ -208,10 +208,10 @@ class IBKeyAuthenticator {
 
     async completeOcraSetup(ocraKey, ocraParams) {
         // get pin
+        const pin = this.#pin;
         if (!pin) {
             throw new Error('pin is required to complete ocra setup');
         }
-        const pin = this.#pin;
 
         const counter = '1';
         const challengeResponse = this._generateChallengeResponse(
