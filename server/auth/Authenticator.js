@@ -10,6 +10,7 @@ const RSAKey = require('./rsa');
 const Sha1 = require('./sha1');
 const Sms = require('./sms');
 const { TwoFactorError } = require('./errors');
+const { authenticator } = require('otplib');
 
 
 const ONE = new BigInteger("1", 16);
@@ -32,12 +33,14 @@ const DSC_PLUS = "5.1";
 const PLAT_GOLD = "5";
 const TSC = "6";
 const SMS = "4.2";
+const TOTP = "4";
 
 
 class Authenticator {
     static SMS = SMS;
     static IBKEY_ANDROID = IBKEY_ANDROID;
     static IBKEY_IOS = IBKEY_ANDROID;
+    static TOTP = TOTP;
     #username = '';
     #password = '';
     #rng = new SecureRandom();
@@ -75,26 +78,33 @@ class Authenticator {
     #ocraPin = null;
     #ocraCounter = null;
     #ocraAlgo = 'OCRA-1:HOTP-SHA1-8:C-QN06-PSHA1';
+    #totpSecret = null;
 
     // session
     #M2 = null;
     #serverM2=null;
     #sessionKey = null;
 
-    static async doAuth({username, password, baseUrl, secondFactorMethod, ocraSecret, ocraPin, ocraCounter}) {
-        const a = new Authenticator(username, password, baseUrl, secondFactorMethod, ocraSecret, ocraPin, ocraCounter);
+    static async doAuth({username, password, baseUrl, secondFactorMethod, ocraSecret, ocraPin, ocraCounter, totpSecret}) {
+        const a = new Authenticator(username, password, baseUrl, secondFactorMethod, ocraSecret, ocraPin, ocraCounter, totpSecret);
         await a.initialize();
         return await a.completeAuthentication();
     }
 
-    constructor(username, password, baseUrl, secondFactorMethod = SMS, ocraSecret, ocraPin, ocraCounter) {
+    constructor(username, password, baseUrl, secondFactorMethod = SMS, ocraSecret, ocraPin, ocraCounter, totpSecret) {
         this.#secondFactorMethod = secondFactorMethod;
         this.#ocraSecret = ocraSecret;
         this.#ocraPin = ocraPin;
         this.#ocraCounter = ocraCounter;
+        this.#totpSecret = totpSecret;
         if (this.#secondFactorMethod === IBKEY_IOS || this.#secondFactorMethod === IBKEY_ANDROID) {
             if (!this.#ocraSecret || !this.#ocraPin || !this.#ocraCounter) {
                 throw new Error('OCRA secret, pin and counter are required for IBKEY auth');
+            }
+        }
+        if (this.#secondFactorMethod === TOTP) {
+            if (!this.#totpSecret) {
+                throw new Error('TOTP secret is required for TOTP auth');
             }
         }
 
@@ -310,6 +320,11 @@ class Authenticator {
         }
         else if (twoFactorType === 'SWTK' && selectedSF === SMS) {
             challengeResponse = await Sms.getChallenge(this.#startDate);
+        }
+        else if (twoFactorType === 'SWTK' && selectedSF === TOTP) {
+            authenticator.options = { digits: 6 };
+            challengeResponse = authenticator.generate(this.#totpSecret);
+            console.log('Generated TOTP code for authentication');
         }
         if (twoFactorType === 'IBTK') {
             throw new Error('case not handled');

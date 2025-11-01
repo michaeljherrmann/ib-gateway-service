@@ -5,7 +5,8 @@
   "main": "server/index.js",
   "scripts": {
     "test": "jest --watch",
-    "setup-ibkey": "node server/auth/setupIBKey.js"
+    "setup-ibkey": "node server/auth/setupIBKey.js",
+    "dev": "docker compose -f docker/compose.yml up --build"
   },
   "repository": {
     "type": "git",
@@ -23,6 +24,7 @@
     "http-cookie-agent": "^7.0.2",
     "jsbn": "^1.1.0",
     "jssha": "2.2.0",
+    "otplib": "^12.0.1",
     "prompt": "^1.1.0",
     "tough-cookie": "^4.0.0",
     "tree-kill": "^1.2.2",

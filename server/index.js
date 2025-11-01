@@ -63,12 +63,12 @@ router.route('/service')
 
     // PUT
     // authenticates the ib gateway using the credentials passed in
-    // body: { username: <USERNAME>, password: <PASSWORD> }
+    // body: { username: <USERNAME>, password: <PASSWORD>, totpSecret: <TOTP_SECRET> (optional) }
     .put((req, res) => {
         if (!req.body.username || !req.body.password) {
             res.status(400).json('username and password are required');
         }
-        doAuth(req.body.username, req.body.password).then((data) => {
+        doAuth(req.body.username, req.body.password, req.body.totpSecret).then((data) => {
             authLockResolve(data);
             authLock = null;
             lockedUntil = null;
@@ -117,7 +117,7 @@ function generatePin() {
     return (Math.floor(Math.random() * (999999 - 1000) ) + 1000).toString();
 }
 
-async function doAuth(username, password) {
+async function doAuth(username, password, totpSecret) {
     if (!gateway) {
         throw new Error('IB gateway needs to be first started before trying to login');
     }
@@ -182,7 +182,13 @@ async function doAuth(username, password) {
         }
 
         let secondFactorMethod = auth.SMS;
-        if (IB_AUTH_USE_IBKEY) {
+
+        // Determine second factor method based on what's provided
+        if (totpSecret) {
+            console.log('Using TOTP as second factor');
+            secondFactorMethod = auth.TOTP;
+        }
+        else if (IB_AUTH_USE_IBKEY) {
             console.log('Using IBKey as second factor');
             secondFactorMethod = auth.IBKEY_ANDROID;
 
@@ -209,6 +215,7 @@ async function doAuth(username, password) {
             ocraPin: authData.pin,
             ocraSecret: authData.ocra,
             ocraCounter: authData.counter,
+            totpSecret: totpSecret,
         });
         authData.counter += 1;
         if (!success) {
