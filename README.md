@@ -14,6 +14,29 @@ Under the hood, this does not use any sort of android emulator nor browser, *eve
 ```
 docker run -p 5050:5050 -p 5000:5000 mjherrma/ib-gateway-service:3.0.7
 ```
+
+## Understanding the Two-Port Architecture
+
+This service exposes **two separate ports**:
+
+1. **Service Port (default: 5050)** - Used to control the IB Gateway lifecycle
+   - Start the gateway: `POST /api/service`
+   - Authenticate: `PUT /api/service`
+   - Stop the gateway: `DELETE /api/service`
+   - Health check: `GET /api/service`
+
+2. **IB Gateway Port (default: 5000)** - The actual IBKR Client Portal Gateway
+   - Once authenticated, make all IB API requests directly to this port
+   - Example: `https://localhost:5000/v1/portal/iserver/auth/status`
+   - This is the standard IBKR Client Portal Web API
+   - **TODO**: Certificate signing is not yet supported. For now, skip SSL verification when making requests (use `-k` with curl or equivalent in your HTTP client)
+
+**Typical workflow:**
+1. Send control commands to port 5050 to start and authenticate the gateway
+2. Make all trading/market data requests directly to port 5000
+
+---
+
 #### Start Client Portal (CP) gateway:
 ```
 curl -X POST http://localhost:5050/api/service
@@ -29,7 +52,10 @@ curl -X PUT -H "Content-Type: application/json" \
 ```
 curl -X PUT -d "username=USERNAME&password=PASSWORD" http://localhost:5050/api/service
 ```
-Now the CP gateway is ready to go: `curl -k https://localhost:5000/v1/portal/iserver/auth/status`
+Now the CP gateway is ready to go. Make IB API requests to port 5000:
+```
+curl -k https://localhost:5000/v1/portal/iserver/auth/status
+```
 
 #### Stop CP gateway:
 ```
@@ -53,7 +79,8 @@ The easiest and most reliable way to authenticate is using TOTP (Time-based One-
 ### Setup:
 1. Configure your Interactive Brokers account to use an authenticator app for two-factor authentication
 2. When setting up the authenticator, save the secret key (usually shown as a QR code and a text string in base32 format)
-3. Pass the TOTP secret along with your credentials when authenticating:
+3. **Store the TOTP secret securely** in your application (e.g., environment variables, secrets manager)
+4. Pass the TOTP secret along with your credentials when authenticating:
 
 ```bash
 curl -X PUT -H "Content-Type: application/json" \
@@ -61,7 +88,9 @@ curl -X PUT -H "Content-Type: application/json" \
   http://localhost:5050/api/service
 ```
 
-That's it! The service will automatically generate the correct 6-digit codes during login. The TOTP secret is passed securely through the API request body and is not persisted by the service.
+That's it! The service will automatically generate the correct 6-digit codes during login.
+
+**Security Note**: The `totpSecret` is passed through the API request body and **is not persisted by this service**. It is the caller's responsibility to store the TOTP secret securely (e.g., in environment variables, a secrets manager, or encrypted configuration).
 
 ## Max Login Attempts
 In order to prevent accidentally locking your IB account, this service will stop attempting to
