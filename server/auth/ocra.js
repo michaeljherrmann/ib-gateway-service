@@ -180,10 +180,12 @@ var OCRA = {
        var hmacTextBuf = hashText;
 
 
-     var shaObj = new jsSHA(hashAlgo, "ARRAYBUFFER");
-     shaObj.setHMACKey(hmacKeyBuf, "ARRAYBUFFER");
+     var shaObj = new jsSHA(hashAlgo, "UINT8ARRAY", {
+       hmacKey: {value: hmacKeyBuf, format: "UINT8ARRAY"}
+     });
      shaObj.update(hmacTextBuf);
-     return shaObj.getHMAC("ARRAYBUFFER");
+     var hmacResult = shaObj.getHMAC("ARRAYBUFFER");
+     return new Uint8Array(hmacResult);
    },
 
    // OCRA method
